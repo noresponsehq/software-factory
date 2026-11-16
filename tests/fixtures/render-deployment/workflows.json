@@ -1,0 +1,24 @@
+[
+	{
+		"cursor": "fcLDfoiY88xscDhtN2twczczYjlkNTkw",
+		"workflow": {
+			"autoDeployTrigger": "off",
+			"buildConfig": {
+				"branch": "NOR-1436-autonomous-connectors",
+				"buildCommand": "npm ci && bash scripts/install-host-tools.sh",
+				"repo": "https://github.com/noresponsehq/software-factory",
+				"rootDir": "",
+				"runtime": "node"
+			},
+			"createdAt": "2026-11-16T18:26:45.02629Z",
+			"defaultVersionId": "wfv-dbtklsmc6qcc73c0o12g",
+			"id": "wfl-dbtklp8m7kps73b9d590",
+			"name": "factory-workflows",
+			"ownerId": "tea-cufunlhopnds73b9966g",
+			"region": "oregon",
+			"runCommand": "bash scripts/start-workflows.sh",
+			"slug": "factory-workflows-0xfr",
+			"updatedAt": "2026-11-16T18:27:47.758258Z"
+		}
+	}
+]

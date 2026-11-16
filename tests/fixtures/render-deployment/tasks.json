@@ -1,0 +1,82 @@
+[
+	{
+		"cursor": "IrhXIqXb0P1tOG5xbG9sZzAwY2loczQw",
+		"task": {
+			"createdAt": "2026-11-16T18:27:46.883145Z",
+			"id": "tsk-dbtkm8nqlolg00cihs40",
+			"name": "pr-review",
+			"workflowId": "wfl-dbtklp8m7kps73b9d590",
+			"workflowVersionId": "wfv-dbtklsmc6qcc73c0o12g"
+		}
+	},
+	{
+		"cursor": "IrhXIqXb0P1tOG5xbG9sZzAwY2loczRn",
+		"task": {
+			"createdAt": "2026-11-16T18:27:46.929424Z",
+			"id": "tsk-dbtkm8nqlolg00cihs4g",
+			"name": "spec-to-pr",
+			"workflowId": "wfl-dbtklp8m7kps73b9d590",
+			"workflowVersionId": "wfv-dbtklsmc6qcc73c0o12g"
+		}
+	},
+	{
+		"cursor": "IrhXIqXb0P1tOG5xbG9sZzAwY2loczUw",
+		"task": {
+			"createdAt": "2026-11-16T18:27:46.976578Z",
+			"id": "tsk-dbtkm8nqlolg00cihs50",
+			"name": "triage",
+			"workflowId": "wfl-dbtklp8m7kps73b9d590",
+			"workflowVersionId": "wfv-dbtklsmc6qcc73c0o12g"
+		}
+	},
+	{
+		"cursor": "IrhXIqXb0P1tOHZxbG9sZzAwY2loczVn",
+		"task": {
+			"createdAt": "2026-11-16T18:27:47.022244Z",
+			"id": "tsk-dbtkm8vqlolg00cihs5g",
+			"name": "autopilot",
+			"workflowId": "wfl-dbtklp8m7kps73b9d590",
+			"workflowVersionId": "wfv-dbtklsmc6qcc73c0o12g"
+		}
+	},
+	{
+		"cursor": "IrhXIqXb0P1tOHZxbG9sZzAwY2loczYw",
+		"task": {
+			"createdAt": "2026-11-16T18:27:47.067558Z",
+			"id": "tsk-dbtkm8vqlolg00cihs60",
+			"name": "cancel",
+			"workflowId": "wfl-dbtklp8m7kps73b9d590",
+			"workflowVersionId": "wfv-dbtklsmc6qcc73c0o12g"
+		}
+	},
+	{
+		"cursor": "IrhXIqXb0P1tOHZxbG9sZzAwY2loczZn",
+		"task": {
+			"createdAt": "2026-11-16T18:27:47.114127Z",
+			"id": "tsk-dbtkm8vqlolg00cihs6g",
+			"name": "refresh-snapshot",
+			"workflowId": "wfl-dbtklp8m7kps73b9d590",
+			"workflowVersionId": "wfv-dbtklsmc6qcc73c0o12g"
+		}
+	},
+	{
+		"cursor": "IrhXIqXb0P1tOHZxbG9sZzAwY2loczcw",
+		"task": {
+			"createdAt": "2026-11-16T18:27:47.158859Z",
+			"id": "tsk-dbtkm8vqlolg00cihs70",
+			"name": "connector",
+			"workflowId": "wfl-dbtklp8m7kps73b9d590",
+			"workflowVersionId": "wfv-dbtklsmc6qcc73c0o12g"
+		}
+	},
+	{
+		"cursor": "IrhXIqXb0P1tOHZxbG9sZzAwY2loczdn",
+		"task": {
+			"createdAt": "2026-11-16T18:27:47.203663Z",
+			"id": "tsk-dbtkm8vqlolg00cihs7g",
+			"name": "connector-continuation",
+			"workflowId": "wfl-dbtklp8m7kps73b9d590",
+			"workflowVersionId": "wfv-dbtklsmc6qcc73c0o12g"
+		}
+	}
+]

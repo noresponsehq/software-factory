@@ -76,5 +76,6 @@ export const TASKS = {
 	autopilot: "autopilot",
 	cancel: "cancel",
 	refreshSnapshot: "refresh-snapshot",
+	doctor: "doctor",
 } as const;
 export type TaskName = (typeof TASKS)[keyof typeof TASKS];
