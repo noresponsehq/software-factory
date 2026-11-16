@@ -54,10 +54,9 @@ describe("doctor --live against recorded Render responses", () => {
 		expect(find("fail", "factory-workflows runs a555c7c, not 0123456")).toBeDefined();
 		expect(find("fail", "tasks not registered on version a555c7c: doctor")).toBeDefined();
 		expect(find("fail", "factory-gateway runs a555c7c, not 0123456")).toBeDefined();
-		expect(find("fail", "factory-intake runs a555c7c, not 0123456")).toBeDefined();
+		expect(find("warn", "factory-intake is suspended on a555c7c, not 0123456")).toBeDefined();
 		expect(find("fail", "in-service probe did not run: Render answered 404 for POST /v1/task-runs")).toBeDefined();
-		expect(find("warn", "factory-intake is suspended")).toBeDefined();
-		expect(failed).toHaveLength(5);
+		expect(failed).toHaveLength(4);
 	});
 
 	it("matches the revision the services run but still fails the missing task and probe", async () => {
@@ -68,6 +67,13 @@ describe("doctor --live against recorded Render responses", () => {
 			"tasks not registered on version a555c7c: doctor",
 			"in-service probe did not run: Render answered 404 for POST /v1/task-runs",
 		]);
+	});
+
+	it("fails an active service on another revision", async () => {
+		const rows = JSON.parse(recorded("services-factory-intake.json")) as { service: object }[];
+		const active = JSON.stringify(rows.map((row) => ({ ...row, service: { ...row.service, suspended: "not_suspended" } })));
+		const { find } = await check(INTENDED, { "GET /v1/services?factory-intake": { body: active } });
+		expect(find("fail", "factory-intake runs a555c7c, not 0123456")).toBeDefined();
 	});
 
 	it("fails the empty workspace the audit found: no Workflow and no factory services", async () => {
