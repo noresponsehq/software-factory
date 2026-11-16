@@ -150,8 +150,11 @@ acceptance recipe at `apps/identity/internal/connectors/<id>/acceptance.json`
 (`app/connectors/acceptance.ts`): the behaviour changed, fixtures, required
 session and route, the public operation, the expected execution and fields,
 the ledger revision followers must report, and uncovered conditions.
-Production reads the recipe from the merge commit, polls the API and worker
-`/healthz` until both report that ledger revision, adds the fixture as a
+Production reads the recipe from the merge commit and polls the operator-only
+`/ledger/machines` route. Both production apps must have recent machine reports,
+and every machine must report the observed release build and required ledger
+revision. Missing apps, old builds and reports older than five minutes fail
+closed; the probe's Fly credential is never used for production SSH. It adds the fixture as a
 person through the public API, and passes only when the person's
 `lookup.records` hold a record from that connector with every expected field
 and no lookup check lists the connector as unanswered. Each failure is typed

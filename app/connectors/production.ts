@@ -7,7 +7,7 @@ import { z } from "zod";
 import { type RepoContext, requireEnv } from "../config/index.js";
 import { type GitHubHttp, gitData, githubToken } from "../github/index.js";
 import { AcceptanceRecipe, proofFailure, proveRelease, recipePath, resolveFixture } from "./acceptance.js";
-import { Ledger } from "./ledger.js";
+import { Ledger, type Machines } from "./ledger.js";
 import { type Assertion, type FailureClass, sha256, uploadArtifacts, type VerificationBundle } from "./bundle.js";
 import { FactoryFailure } from "./failure.js";
 import { productionFailure } from "./production-evidence.js";
@@ -207,7 +207,14 @@ export async function productionSearch(
 }
 
 const api = "https://api.noresponse.org";
-const Health = z.object({ ledger: z.object({ rev: z.number().int().nonnegative() }) });
+export function machineRevisions(report: z.infer<typeof Machines>, build: string, now = Date.now()) {
+	const revision = (app: string) => {
+		const machines = report.machines.filter((machine) => machine.app === app);
+		if (!machines.length || machines.some((machine) => machine.build !== build || Date.parse(machine.seen_at) > now || now - Date.parse(machine.seen_at) > 300000)) return null;
+		return Math.min(...machines.map((machine) => machine.rev));
+	};
+	return { api: revision("nr-ii-prod-api"), worker: revision("nr-ii-prod-worker") };
+}
 
 export async function readRecipe(http: GitHubHttp, repo: string, merge: string, connector: string) {
 	let raw: unknown;
@@ -277,18 +284,8 @@ export async function productionVerify(
 	const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 	const version = async () =>
 		z.object({ build_version: z.string() }).parse(await (await fetch(`${api}/version`, { signal: AbortSignal.timeout(30000) })).json()).build_version;
-	const revisions = async () => {
-		const apiRev = Health.safeParse(await (await fetch(`${api}/healthz`, { signal: AbortSignal.timeout(30000) })).json().catch(() => null));
-		const worker = await exec("fly", ["ssh", "console", "--app", "nr-ii-prod-worker", "--command", "wget -qO- http://127.0.0.1:9091/healthz"], {
-			env: { PATH: process.env.PATH, HOME: process.env.HOME, FLY_API_TOKEN: requireEnv("FACTORY_FLY_API_TOKEN") },
-			timeout: 60000,
-			signal,
-		}).then(
-			(result) => Health.safeParse(JSON.parse(result.stdout)),
-			() => null,
-		);
-		return { api: apiRev.success ? apiRev.data.ledger.rev : null, worker: worker?.success ? worker.data.ledger.rev : null };
-	};
+	const ledger = new Ledger(requireEnv("NR_LEDGER_URL"), requireEnv("NR_FACTORY_OPERATOR_TOKEN"));
+	const revisions = async (build: string) => machineRevisions(await ledger.machines(), build);
 	const proof = await proveRelease(merge, { ...recipe, observe: { ledger_revision: requiredRevision } }, {
 		version,
 		contains: (older, newer) => contains(http, repo.fullName, older, newer),

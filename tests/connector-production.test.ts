@@ -163,7 +163,7 @@ function transport(control = sealedControl, revision = 42) {
   const body = init.body ? JSON.parse(String(init.body)) : null;
   calls.push({ url, method, body, auth: new Headers(init.headers).get("authorization"), redirect: init.redirect });
   if (url.endsWith("/version")) return Response.json({ build_version: sha });
-  if (url.endsWith("/healthz")) return Response.json({ ledger: { rev: revision } });
+  if (url.endsWith("/ledger/machines")) return Response.json({ rev: revision, machines: ["nr-ii-prod-api", "nr-ii-prod-worker"].map(app => ({ machine: app, app, build: sha, rev: revision, seen_at: new Date().toISOString() })) });
   if (url.endsWith("/ledger/controls/firefox_email")) return Response.json({ connector: "firefox_email", controls: [control] });
   if (url.endsWith("/v1/groups") && method === "POST") return Response.json({ id: "g1" });
   if (url.endsWith("/v1/groups/g1/people") && method === "POST") return Response.json({ items: [{ id: "p1" }] });
