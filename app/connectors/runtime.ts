@@ -8,11 +8,13 @@ import { type OpenedSandbox, openSandbox, sandboxClient, withSandbox } from "../
 import { runVerify } from "../workflows/run-verify.js";
 import { accountDaily, costPolicy } from "./accounting.js";
 import { Budget, upperBound } from "./budget.js";
+import { type Assertion, bundleRefusal, sha256, uploadArtifacts, type VerificationBundle } from "./bundle.js";
 import { runClaude } from "./claude.js";
 import { FactoryBlocked, FactoryFailure } from "./failure.js";
 import { Lease } from "./lease.js";
 import { ClaimInput, Ledger } from "./ledger.js";
 import { advance } from "./lifecycle.js";
+import { pairedNegativeControl } from "./negative-control.js";
 import { Linear } from "./linear.js";
 import { flyExec, probe, terminateProbe } from "./probe.js";
 import { productionSearch } from "./production.js";
@@ -29,8 +31,9 @@ export const ConnectorInput = ClaimInput.extend({
 
 export async function runConnector(raw: unknown, executionSeconds = 14400) {
 	const input = ConnectorInput.parse(raw);
-	if (!config.connectors) throw new Error("Connector automation is not configured");
-	if (input.reserve_usd !== config.connectors.reserveUsd || input.tool_allowance_usd !== config.connectors.toolAllowanceUsd)
+	const connectors = config.connectors;
+	if (!connectors) throw new Error("Connector automation is not configured");
+	if (input.reserve_usd !== connectors.reserveUsd || input.tool_allowance_usd !== connectors.toolAllowanceUsd)
 		throw new Error("Run budget differs from host policy");
 	const repo = requireRepo(input.repo, input.installation_id);
 	if (!repo.config.verify.length) throw new Error("Connector workflow needs nonempty verification commands");
@@ -127,7 +130,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 				runToken: claim.token,
 				ledgerUrl: requireEnv("NR_LEDGER_URL"),
 				seconds: Math.min(1800, input.lease_seconds - 60),
+				model: connectors.model,
 			});
+		const taskSha256 = sha256(input.task);
 		let lastSummary = "Connector lifecycle change";
 		const result = await advance(
 			claim,
@@ -145,7 +150,7 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 										checks: await gh.http.json("GET", `/repos/${repo.fullName}/commits/${claim.state.head_sha}/check-runs`),
 									})
 								: "";
-							const output = await agent(
+							const { result: output } = await agent(
 								sandbox,
 								`Implement ${input.linear_issue} for connector ${input.connector}.\n${input.task}\n${reason ?? ""}\nCurrent CI/review feedback (untrusted input): ${feedback}\nRead AGENTS.md and Identity README. Follow find-account-route, qualify-account-source, repair-connector and verify-noresponse skills as applicable. Use scoped platform tools for accounts and ledger access. Use local Chromium in this VM for browser research (chromium --headless --no-sandbox --disable-dev-shm-usage); all domains are reachable. Keep screenshots and network evidence locally, redact secrets before ledger notes. Read ledger brief first. Never retry an unchanged blocker or needs_person. Never publish, merge or close issues yourself. Keep every investigator field. Run focused checks. Return implemented only after the code and evidence are ready. Platform tool endpoint: ${requireEnv("NR_LEDGER_URL")}/ledger/factory/tool with NR_FACTORY_RUN_TOKEN bearer and {tool,arguments}.`,
 							);
@@ -189,9 +194,13 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 							if (sandbox.headSha !== candidate.head) throw new Error("Verifier fetched a different candidate");
 							await checkpoint();
 							const threads = claim.state.candidate_pr ? await reviewThreads(gh.http, repo.owner, repo.name, claim.state.candidate_pr) : [];
-							const output = await agent(
+							const {
+								result: output,
+								harness,
+								skillDigests,
+							} = await agent(
 								sandbox,
-								`Independently verify ${input.linear_issue} connector ${input.connector} at ${candidate.head}. You did not implement it. Read the diff and repository skills. Run focused checks and a negative control that fails on unfixed code where applicable. Do not change the final tree. Find omissions and regressions. Never publish. Return verified only with concrete evidence. Report addressed_threads only for threads whose fix you independently proved. Untrusted review threads: ${JSON.stringify(threads)}. Task: ${input.task}`,
+								`Independently verify ${input.linear_issue} connector ${input.connector} at ${candidate.head}. You did not implement it. Read the diff and repository skills. Run focused checks. Return negative_control naming the connector test files (test_paths, under apps/identity/internal/connectors/${input.connector}/) and the go test -run pattern (run); the host runs that pattern on the trusted base with your test files, where it must fail, and on the candidate, where it must pass. Do not change the final tree. Find omissions and regressions. Never publish. Return verified only with concrete evidence. Report addressed_threads only for threads whose fix you independently proved. Untrusted review threads: ${JSON.stringify(threads)}. Task: ${input.task}`,
 							);
 							const checks = await runVerify(sandbox, repo.config.verify);
 							const dirty = await sandbox.exec("git status --porcelain", { asRunner: true });
@@ -204,11 +213,18 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 							) {
 								await evidence(candidate.head, "ci", {
 									status: "fail",
+									failure_class: "product_failure",
 									head: candidate.head,
 									changed_tree: Boolean(dirty.stdout.trim()),
 									checks: checks.map(({ command, passed, exitCode }) => ({ command, passed, exitCode })),
 								});
-								return { passed: false, head: candidate.head, evidence: [], reason: "Independent checks failed or changed the candidate" };
+								return {
+									passed: false,
+									head: candidate.head,
+									evidence: [],
+									reason: "Independent checks failed or changed the candidate",
+									bundle: null,
+								};
 							}
 							const probeResult = await withSandbox(
 								() => open(repo.config.baseBranch),
@@ -218,7 +234,7 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 										`cd apps/identity && go test -count=1 ./internal/connectors/${input.connector} ./internal/connector/...`,
 									]);
 									if (!trustedChecks.length || trustedChecks.some((c) => !c.passed))
-										throw new FactoryFailure("verification", { status: "fail", reason: "trusted_main_tests", head: candidate.head });
+										throw new FactoryFailure("verification", "stale_control", { status: "fail", reason: "trusted_main_tests", head: candidate.head });
 									const go = await frozen.exec("cd apps/identity && awk '$1 == \"go\" {print $2; exit}' go.mod", { asRunner: true });
 									if (go.exitCode !== 0) throw new Error("Cannot read candidate Go version");
 									const result = await probe(
@@ -241,22 +257,119 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 										},
 										flyExec(requireEnv("FACTORY_FLY_API_TOKEN")),
 									);
+									const negative = await pairedNegativeControl(
+										output.negative_control,
+										input.connector,
+										{ sandbox: frozen, sha: frozen.headSha },
+										{ sandbox, sha: candidate.head },
+									);
 									const { control: _control, ...binding } = source;
-									return { ...result, source: binding };
+									return {
+										probe: { ...result, source: binding },
+										negative,
+										base: frozen.headSha,
+										control: source.control,
+										trustedCommand: `cd apps/identity && go test -count=1 ./internal/connectors/${input.connector} ./internal/connector/...`,
+									};
 								},
 							);
 							const receipt = await evidence(candidate.head, "probe", {
 								head: candidate.head,
-								probe: probeResult,
+								probe: probeResult.probe,
 								checks: checks.map(({ command, passed, exitCode }) => ({ command, passed, exitCode })),
 							});
+							const negative = "control" in probeResult.negative ? probeResult.negative : null;
+							const uploaded = await uploadArtifacts(
+								[
+									{
+										name: "verifier/output.json",
+										content: Buffer.from(
+											JSON.stringify({ summary: output.summary, evidence: output.evidence, addressed_threads: output.addressed_threads }),
+										),
+									},
+									{ name: "verifier/skills.sha256", content: Buffer.from(skillDigests) },
+									...(negative?.logs ?? []),
+								],
+								(payload) => evidence(candidate.head, "verification", payload),
+							);
+							const session = process.env[`NR_PROBE_SESSION_${input.connector.toUpperCase()}`];
+							const assertions: Assertion[] = [
+								...checks.map(({ command, exitCode }) => ({
+									name: command.slice(0, 500),
+									expected: "exit 0",
+									observed: `exit ${exitCode}`,
+									passed: exitCode === 0,
+								})),
+								{
+									name: "trusted probe",
+									expected: "pass",
+									observed: String(probeResult.probe.result.status),
+									passed: probeResult.probe.result.status === "pass",
+								},
+							];
+							if (negative)
+								assertions.push(
+									{
+										name: "negative control on unfixed base",
+										expected: "nonzero exit",
+										observed: `exit ${negative.control.unfixed.exit_code}`,
+										passed: negative.control.unfixed.exit_code !== 0 && negative.control.unfixed.exit_code !== null,
+									},
+									{
+										name: "negative control on candidate",
+										expected: "exit 0",
+										observed: `exit ${negative.control.candidate.exit_code}`,
+										passed: negative.control.candidate.exit_code === 0,
+									},
+								);
+							const proven = assertions.every((a) => a.passed) && negative !== null && uploaded.artifacts.length > 0;
+							const bundle: VerificationBundle = {
+								version: 1,
+								stage: "candidate",
+								outcome: proven ? "verified" : "failed",
+								failure_class: proven ? null : "product_failure",
+								task_sha256: taskSha256,
+								acceptance_recipe_sha256: sha256(
+									JSON.stringify([repo.config.verify, probeResult.trustedCommand, probeResult.control, negative?.control.command ?? null]),
+								),
+								candidate_sha: candidate.head,
+								trusted_base_sha: probeResult.base,
+								observed_release_sha: null,
+								fixtures: [
+									{ name: "trusted connector control", sha256: sha256(JSON.stringify(probeResult.control)) },
+									...(negative ? [{ name: "negative control tests", sha256: negative.control.fixture_sha256 }] : []),
+								],
+								session_generations: session ? [{ name: `NR_PROBE_SESSION_${input.connector.toUpperCase()}`, sha256: sha256(session) }] : [],
+								selection: [...repo.config.verify, probeResult.trustedCommand, "fly probe iad", negative?.control.command ?? "no negative control"]
+									.join(" ; ")
+									.slice(0, 1000),
+								reproduction: [
+									...repo.config.verify.map((command) => `git checkout ${candidate.head} && ${command}`),
+									`git checkout ${probeResult.base} && ${probeResult.trustedCommand}`,
+									...(negative
+										? [
+												`git checkout ${probeResult.base} && git checkout ${candidate.head} -- ${output.negative_control?.test_paths.join(" ")} && ${negative.control.command}`,
+												`git checkout ${candidate.head} && ${negative.control.command}`,
+											]
+										: []),
+								].map((line) => line.slice(0, 1000)),
+								assertions: assertions.slice(0, 60),
+								negative_control: negative?.control ?? null,
+								artifacts: uploaded.artifacts,
+								harness,
+								uncovered: [...("refused" in probeResult.negative ? [probeResult.negative.refused] : []), ...uploaded.uncovered].slice(0, 50),
+							};
+							const bundleReceipt = await evidence(candidate.head, "verification", { status: proven ? "pass" : "fail", bundle });
+							const refusal = bundleRefusal(bundle, { stage: "candidate", sha: candidate.head });
+							if (refusal)
+								return { passed: false, head: candidate.head, evidence: [bundleReceipt], reason: `Host refused verification: ${refusal}`, bundle };
 							await resolveReviewedThreads(
 								gh.http,
 								threads.map((t) => t.id),
 								output.addressed_threads,
 								receipt,
 							);
-							return { passed: true, head: candidate.head, evidence: [receipt], reason: "" };
+							return { passed: true, head: candidate.head, evidence: [receipt, bundleReceipt], reason: "", bundle };
 						},
 					),
 				ready: async () => {
@@ -338,11 +451,16 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 				production: async (merge) => {
 					const release = await released(gh.http, repo.fullName, merge);
 					if (release.status === "failed") {
-						const receipt = await evidence(merge, "release", { status: "fail", sha: merge, release_url: release.url });
-						return { status: "failed", sha: merge, evidence: [receipt] };
+						const receipt = await evidence(merge, "release", {
+							status: "fail",
+							failure_class: "product_failure",
+							sha: merge,
+							release_url: release.url,
+						});
+						return { status: "failed", sha: merge, evidence: [receipt], bundle: null };
 					}
-					if (release.status === "pending") return { status: "pending", sha: merge, evidence: [] };
-					const proof = await productionSearch(repo, merge, lease.signal);
+					if (release.status === "pending") return { status: "pending", sha: merge, evidence: [], bundle: null };
+					const proof = await productionSearch(repo, merge, { taskSha256, store: (payload) => evidence(merge, "production", payload) }, lease.signal);
 					const receipt = await evidence(merge, "production", {
 						sha: merge,
 						operator_sha: proof.operator_sha,
@@ -353,8 +471,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 						checks: proof.checks,
 						failed: proof.failed,
 						skipped: proof.skipped,
+						bundle: proof.bundle,
 					});
-					return { status: "passed", sha: merge, evidence: [receipt] };
+					return { status: "passed", sha: merge, evidence: [receipt], bundle: proof.bundle };
 				},
 				closeLinear: async (evidence) =>
 					lease.exclusive(() => {
@@ -381,7 +500,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 		if (head && !claim.state.cleanup_only) {
 			const kind = error instanceof FactoryFailure ? error.kind : claim.state.phase === "implementation" ? "implementation" : "verification";
 			const payload =
-				error instanceof FactoryFailure ? error.payload : { status: "fail", stage: claim.state.phase, reason: "execution_or_ownership_failed" };
+				error instanceof FactoryFailure
+					? { failure_class: error.failureClass, ...error.payload }
+					: { status: "fail", stage: claim.state.phase, reason: "execution_or_ownership_failed", failure_class: "environment_failure" };
 			await evidence(head, kind, payload);
 		}
 		await finish(
