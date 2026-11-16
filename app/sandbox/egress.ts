@@ -1,6 +1,6 @@
-import type { SandboxNetworkPolicy } from "@renderinc/sdk/experimental";
+import type { SandboxNetworkPolicy } from "@renderinc/sdk";
 import { AGENTS } from "../agents/registry.js";
-import { assertEgressHosts, type RepoContext } from "../config/index.js";
+import { assertEgressHosts, config, type RepoContext } from "../config/index.js";
 
 /** Clone and fetch reach GitHub over HTTPS. */
 const GITHUB_HOST = "github.com";
@@ -20,7 +20,11 @@ export function taskEgress(repo: RepoContext): SandboxNetworkPolicy {
 
 /** The snapshot builder's policy: it never calls a model, but it installs base-image tools. */
 export function builderEgress(repo: RepoContext): SandboxNetworkPolicy {
-	return egressPolicy(repo, [GITHUB_HOST, DEBIAN_MIRROR]);
+	return egressPolicy(repo, [
+		GITHUB_HOST,
+		DEBIAN_MIRROR,
+		...(config.connectors ? ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "go.dev", "dl.google.com"] : []),
+	]);
 }
 
 /** Appended to install failures: a blocked host fails as a reset connection, which reads like a network flake. */

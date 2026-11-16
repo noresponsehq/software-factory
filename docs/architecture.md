@@ -224,7 +224,7 @@ Changes must preserve these properties:
 5. Run every model-directed tool inside a Sandbox.
 6. Build repositories, refs, branches, and write targets from trusted input.
 7. Publish only after GitHub reproduces the validated tree SHA.
-8. Stop automation at a draft pull request and a COMMENT review.
+8. The upstream examples stop at a draft PR and COMMENT review. Connector mode uses the independently verified ready-PR and production gates in [the connector workflow](connector-factory.md).
 9. Implement the specification as it existed when approved.
 10. Give every Sandbox a provider timeout and `finally` cleanup. Record a
     GitHub task's Sandbox so cancellation can terminate it.

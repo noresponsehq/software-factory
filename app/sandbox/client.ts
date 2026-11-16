@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import type { SandboxesClient, SandboxUploadContentType } from "@renderinc/sdk";
 import { ClientError, Render, ServerError } from "@renderinc/sdk";
-import type { SandboxesClient, SandboxUploadContentType } from "@renderinc/sdk/experimental";
 import { requireEnv } from "../config/index.js";
 import { errorMessage, log } from "./shell.js";
 import type { ExecResult } from "./types.js";
@@ -165,7 +165,7 @@ export function sandboxClient(): SandboxClient {
 		if (!workspaceId.startsWith("tea-")) throw new Error("RENDER_WORKSPACE_ID must be a tea-… workspace id");
 		// useLocalDev: false keeps sandbox calls on api.render.com even under a local workflows dev server.
 		const render = new Render({ useLocalDev: false, token: requireEnv("RENDER_API_KEY"), ownerId: workspaceId });
-		shared = new SandboxClient(render.experimental.sandboxes);
+		shared = new SandboxClient(render.sandboxes);
 	}
 	return shared;
 }

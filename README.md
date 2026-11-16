@@ -1,4 +1,11 @@
-# software-factory
+# NoResponse connector factory
+
+This fork adds the NoResponse autonomous connector workflow on Render. Read
+[connector setup, execution and evidence](docs/connector-factory.md). The code
+uses Claude Code subscription authentication and the D1 factory ledger. Live
+deployment and bounded browser traffic require separate verification.
+
+The upstream template and its example workflows are described below.
 
 software-factory is an extensible template for building GitHub-native coding agent
 workflows on Render. It includes a complete issue-to-PR workflow that you can

@@ -1,5 +1,7 @@
 export type { GitHubTokenOptions } from "./auth.js";
+export { githubToken } from "./auth.js";
 export { GitHubClient, type GitHubForOptions, githubFor } from "./client.js";
+export * from "./git-data.js";
 export {
 	contentHash,
 	findMarkedComment,
@@ -13,4 +15,3 @@ export {
 } from "./markers.js";
 export { GitHubHttp, type GitHubHttpOptions, type RequestOptions, type TokenProvider } from "./request.js";
 export * from "./types.js";
-export * from "./git-data.js";

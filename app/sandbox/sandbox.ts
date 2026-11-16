@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { SandboxNetworkPolicy } from "@renderinc/sdk";
 import { SandboxSnapshotNotFoundError, SandboxSnapshotNotReadyError } from "@renderinc/sdk";
-import type { SandboxNetworkPolicy } from "@renderinc/sdk/experimental";
 import { z } from "zod";
 import { config, type RepoContext } from "../config/index.js";
 import { type SandboxClient, sandboxClient } from "./client.js";
@@ -55,6 +55,9 @@ function connectSandbox(id: string, client?: SandboxClient): Sandbox {
 }
 
 export interface OpenSandboxDeps extends SnapshotDeps {
+	resourceName?: string;
+	timeoutSeconds?: number;
+	onCreated?: (id: string) => Promise<void>;
 	client?: SandboxClient;
 	resolveBaseHead?: (repo: RepoContext, deps: SnapshotDeps) => Promise<string>;
 	buildSnapshot?: (client: SandboxClient, repo: RepoContext, sha: string, deps: SnapshotDeps) => Promise<BuiltSnapshot>;
@@ -130,21 +133,38 @@ async function createFromSnapshot(client: SandboxClient, repo: RepoContext, egre
 			await client.call(() =>
 				client.api.create({
 					snapshotName: name,
+					...(deps.resourceName ? { name: deps.resourceName } : {}),
+					...(config.connectors ? { plan: "2c-4g" as const, idleTimeoutSeconds: 0 } : {}),
 					networkPolicy: egress,
-					timeoutSeconds: config.sandbox.timeoutSeconds,
+					timeoutSeconds: deps.timeoutSeconds ?? config.sandbox.timeoutSeconds,
 				}),
 			)
 		).id;
 	try {
-		return await create();
+		const id = await create();
+		try {
+			await deps.onCreated?.(id);
+		} catch (error) {
+			await client.terminateQuietly(id);
+			throw error;
+		}
+		return id;
 	} catch (err) {
 		if (!isSnapshotUnavailable(err)) throw err;
+		if (config.connectors) throw new Error("Connector snapshot missing; build it under a separate setup reservation");
 		log("warn", "no available snapshot; building one inline", { repo: repo.fullName, snapshot: name, error: errorMessage(err) });
 	}
 	const sha = await (deps.resolveBaseHead ?? resolveBaseHead)(repo, deps);
 	await (deps.buildSnapshot ?? buildSnapshot)(client, repo, sha, deps);
 	try {
-		return await create();
+		const id = await create();
+		try {
+			await deps.onCreated?.(id);
+		} catch (error) {
+			await client.terminateQuietly(id);
+			throw error;
+		}
+		return id;
 	} catch (err) {
 		if (isSnapshotUnavailable(err)) {
 			throw new Error(`no available snapshot named ${name} even after building one inline: ${errorMessage(err)}`, { cause: err });

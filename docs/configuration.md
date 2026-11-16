@@ -388,3 +388,7 @@ and create each group in the table with the exact name and variables shown.
 Paste values from `.env` or from their source without showing them in chat.
 Workflows `doctor` still reads these values locally, so export them in the
 shell where it runs.
+
+## NoResponse connector mode
+
+See [connector configuration](connector-factory.md#configuration-and-setup) for subscription credentials, intake, D1 leases and the shared budget. `FactoryConfig.connectors` selects this mode. The gateway receives no ledger, Linear, Fly or Claude credential.

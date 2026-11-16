@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import type { SandboxSnapshot } from "@renderinc/sdk";
 import { ClientError, SandboxSnapshotNotFoundError } from "@renderinc/sdk";
-import type { SandboxSnapshot } from "@renderinc/sdk/experimental";
 import { create as createTar } from "tar";
-import type { RepoContext } from "../config/index.js";
+import { config, type RepoContext } from "../config/index.js";
 import { githubToken } from "../github/auth.js";
 import { bundleRunner } from "../runner/bundle.js";
 import { type SandboxApi, type SandboxClient, TRANSIENT } from "./client.js";
@@ -31,6 +31,7 @@ const SANDBOX_SCRIPTS_DIR = fileURLToPath(new URL("../../sandbox/", import.meta.
 /** Copied into APP_DIR and kept in the snapshot. `build/` is needed again when a restored sandbox fetches. */
 const RUNTIME_SCRIPTS = [
 	"install-tools.sh",
+	"install-connector-tools.sh",
 	"as-runner.sh",
 	"run-agent.sh",
 	"collect-changes.sh",
@@ -118,6 +119,7 @@ export async function buildSnapshot(client: SandboxClient, repo: RepoContext, sh
 			boot,
 		);
 		await client.check(id, `bash ${APP_DIR}/install-tools.sh`, prepare);
+		if (config.connectors) await client.check(id, `bash ${APP_DIR}/install-connector-tools.sh`, prepare);
 		const node = await nodePath(client, id);
 		await client.check(id, createRunnerUserCommand(), boot);
 		await client.upload(id, `${APP_DIR}/env`, envFileContent(node));

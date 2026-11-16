@@ -27,6 +27,7 @@ const Label = z.object({ name: z.string() });
 
 const Issue = z.object({
 	number: z.number().int(),
+	body: z.string().nullable().optional(),
 	updated_at: z.string().optional(),
 	labels: z.array(Label).default([]),
 	pull_request: z.unknown().optional(),
@@ -75,6 +76,7 @@ export function route(event: string, payload: unknown, deliveryId: string): Rout
 
 	const base = { repo: repo.fullName, installationId: repo.installationId };
 	const actor = sender?.login ?? "";
+	if (config.connectors && event !== "issues") return ignore("connector mode uses host continuation tasks");
 	const start = (task: TaskName, schema: ZodType, input: Record<string, unknown>, subject?: string, idempotencyKey = deliveryId): Route => {
 		const parsed = schema.safeParse({ ...base, ...input });
 		if (!parsed.success) return { kind: "invalid", task, reason: parsed.error.message, subject };
@@ -89,6 +91,32 @@ export function route(event: string, payload: unknown, deliveryId: string): Rout
 			const { label, issue } = parsed.data;
 			if (isPullRequest(issue)) return ignore("pull request");
 			const subject = `issue#${issue.number}`;
+			if (config.connectors) {
+				if (label?.name !== config.connectors.marker) return ignore("connector mode ignores legacy model workflows");
+				const connector = /<!--\s*connector:([a-z0-9_]+)\s*-->/.exec(issue.body ?? "")?.[1];
+				const linear = /\bNOR-\d+\b/.exec(issue.body ?? "")?.[0];
+				if (!connector || !linear)
+					return { kind: "invalid", task: TASKS.connector, reason: "Issue requires connector marker and assigned NOR issue", subject };
+				return {
+					kind: "start",
+					task: TASKS.connector,
+					idempotencyKey: deliveryId,
+					subject,
+					input: {
+						repo: repo.fullName,
+						installation_id: repo.installationId,
+						actor,
+						event_id: `github:${repo.fullName}:${issue.number}:${issue.updated_at ?? deliveryId}`,
+						connector,
+						linear_issue: linear,
+						condition_hash: issue.updated_at ?? deliveryId,
+						task: issue.body ?? "",
+						reserve_usd: config.connectors.reserveUsd,
+						tool_allowance_usd: config.connectors.toolAllowanceUsd,
+						lease_seconds: 3600,
+					},
+				};
+			}
 			if (label?.name === config.labels.triage) {
 				return start(TASKS.triage, TriageInput, { issue: issue.number, actor }, subject);
 			}

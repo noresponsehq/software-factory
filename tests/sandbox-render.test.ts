@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { SandboxExecEvent } from "@renderinc/sdk";
 import { SandboxSnapshotNotFoundError } from "@renderinc/sdk";
-import type { SandboxExecEvent } from "@renderinc/sdk/experimental";
 import { list as listTar } from "tar";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { config, type RepoContext } from "../app/config/index.js";
@@ -260,6 +260,7 @@ describe("buildSnapshot", () => {
 			"build/git-credential-staged.sh",
 			"build/scrub-credentials.sh",
 			"collect-changes.sh",
+			"install-connector-tools.sh",
 			"install-tools.sh",
 			"lockfile-hash.sh",
 			"run-agent.sh",
