@@ -39,6 +39,10 @@ export const FactoryAcceptance = z.union([
 	z.strictObject({ owned: z.literal(true), accepted: z.literal(true), merge_sha: z.string().regex(/^[a-f0-9]{40}$/) }),
 ]);
 export type FactoryAcceptance = z.infer<typeof FactoryAcceptance>;
+export const Machines = z.object({
+	machines: z.array(z.object({ machine: z.string(), app: z.string(), build: z.string(), rev: z.number().int().nonnegative(), seen_at: z.string().datetime({ offset: true }) })),
+	rev: z.number().int().nonnegative(),
+});
 export function mergeState(known: State, reported: z.infer<typeof Reported>): State {
 	return {
 		...reported,
@@ -152,6 +156,16 @@ export class Ledger {
 		);
 		if (!response.ok) throw new Error(`Factory ledger controls returned ${response.status}`);
 		return TrustedControls.parse(await response.json()).controls;
+	}
+	async machines() {
+		const response = await this.request(`${this.url.replace(/\/$/, "")}/ledger/machines`, {
+			method: "GET",
+			headers: { Authorization: `Bearer ${this.operatorToken}` },
+			signal: AbortSignal.timeout(30000),
+			redirect: "error",
+		});
+		if (!response.ok) throw new Error(`Factory ledger machines returned ${response.status}`);
+		return Machines.parse(await response.json());
 	}
 	async evidence(
 		claim: Claimed,

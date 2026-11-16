@@ -129,7 +129,7 @@ export type SmokeProof = {
 export type ProofPorts = {
 	version: () => Promise<string>;
 	contains: (older: string, newer: string) => Promise<boolean>;
-	revisions: () => Promise<Revisions>;
+	revisions: (build: string) => Promise<Revisions>;
 	smoke: (build: string) => Promise<SmokeProof>;
 	lookup: (recipe: AcceptanceRecipe) => Promise<unknown>;
 	clock: { now: () => number; sleep: (ms: number) => Promise<void>; timeoutMs: number; intervalMs: number };
@@ -145,7 +145,7 @@ export async function proveRelease(requested: string, recipe: AcceptanceRecipe, 
 	};
 	let build = await follow(requested);
 	for (let attempt = 0; attempt < 3; attempt++) {
-		const ledger = await awaitLedgerRevision(ports.revisions, recipe.observe.ledger_revision, ports.clock);
+		const ledger = await awaitLedgerRevision(() => ports.revisions(build), recipe.observe.ledger_revision, ports.clock);
 		const smoke = await ports.smoke(build);
 		const behaviour = proveBehaviour(recipe, await ports.lookup(recipe));
 		const after = await follow(build);

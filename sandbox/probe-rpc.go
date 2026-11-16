@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/noresponsehq/noresponse/apps/identity/internal/connector"
@@ -56,12 +57,11 @@ func main() {
 		Session string `json:"session"`
 		Proxies string `json:"proxies"`
 	}
-	if json.NewDecoder(io.LimitReader(os.Stdin, 65536)).Decode(&request) != nil {
+	if json.NewDecoder(io.LimitReader(os.Stdin, 65536)).Decode(&request) != nil || request.Value == "" {
 		os.Exit(2)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	secrets := &scrubber{}
-	secrets.add(request.Value)
 	inputs, err := readSession(request.Session, id, declaration.Need, secrets)
 	if err != nil {
 		os.Exit(2)
@@ -79,5 +79,16 @@ func main() {
 	defer closeAll()
 	result := lookUp(ctx, asker, connector.Query{By: request.By, Value: request.Value})
 	result.Cause = ""
-	_ = json.NewEncoder(secrets.writer(os.Stdout)).Encode(result)
+	redact := func(value string) string {
+		return secrets.scrub(strings.ReplaceAll(value, request.Value, "[redacted]"))
+	}
+	for field, values := range result.Values {
+		for i, value := range values {
+			result.Values[field][i] = redact(value)
+		}
+	}
+	for i, source := range result.Sources {
+		result.Sources[i] = redact(source)
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(result)
 }
