@@ -36,3 +36,13 @@ it("preserves the network failure classification without private cause text", ()
 it("supplies the private policy command independently of the public CLI", () => {
 	expect(JSON.parse(execFileSync(binary, ["policy"], { encoding: "utf8" }))).toEqual({ trials: 5, admitted_ms: 5000 });
 });
+it("does not force a direct connector through an available residential proxy", () => {
+	const output = execFileSync(binary, ["lookup", "github"], { input: JSON.stringify({ by: "email", value: "synthetic@example.invalid", proxies: "/secrets/proxies", proxy_network: "residential" }), encoding: "utf8" });
+	expect(JSON.parse(output).found).toBe(true);
+});
+it("requires the declared network to match the supplied proxy list", () => {
+	const request = { by: "email", value: "synthetic@example.invalid", proxies: "/secrets/proxies", proxy_network: "residential" };
+	expect(JSON.parse(execFileSync(binary, ["lookup", "residential"], { input: JSON.stringify(request), encoding: "utf8" })).found).toBe(true);
+	for (const proxy_network of ["", "datacenter", "mobile"])
+		expect(() => execFileSync(binary, ["lookup", "residential"], { input: JSON.stringify({ ...request, proxy_network }), stdio: ["pipe", "pipe", "pipe"] })).toThrow();
+});

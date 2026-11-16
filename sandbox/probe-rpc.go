@@ -52,10 +52,11 @@ func main() {
 		os.Exit(2)
 	}
 	var request struct {
-		By      string `json:"by"`
-		Value   string `json:"value"`
-		Session string `json:"session"`
-		Proxies string `json:"proxies"`
+		By           string `json:"by"`
+		Value        string `json:"value"`
+		Session      string `json:"session"`
+		Proxies      string `json:"proxies"`
+		ProxyNetwork string `json:"proxy_network"`
 	}
 	if json.NewDecoder(io.LimitReader(os.Stdin, 65536)).Decode(&request) != nil || request.Value == "" {
 		os.Exit(2)
@@ -64,6 +65,11 @@ func main() {
 	secrets := &scrubber{}
 	inputs, err := readSession(request.Session, id, declaration.Need, secrets)
 	if err != nil {
+		os.Exit(2)
+	}
+	if declaration.Need.Egress.Direct() {
+		request.Proxies = ""
+	} else if declaration.Need.Egress.Network.String() != request.ProxyNetwork {
 		os.Exit(2)
 	}
 	routes, err := readProxies(request.Proxies, declaration.Need.Egress, secrets)

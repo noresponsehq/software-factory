@@ -133,7 +133,7 @@ export const ENV_GROUPS: readonly EnvGroupSpec[] = [
 		name: "software-factory-workflows",
 		services: ["workflows"],
 		keys: ["RENDER_WORKSPACE_ID", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", ...HARNESS_KEY_ENV, ...CONNECTOR_ENV],
-		optionalKeys: config.connectors ? ["NR_PROD_WORKER_LOGS_TOKEN"] : [],
+		optionalKeys: config.connectors ? ["NR_PROD_WORKER_LOGS_TOKEN", "NR_PROBE_PROXIES_RESIDENTIAL"] : [],
 	},
 	...(config.connectors ? [{ name: "software-factory-intake", services: ["intake" as const], keys: INTAKE_ENV }] : []),
 ];
@@ -149,6 +149,7 @@ export const SECRET_ENV: readonly string[] = [
 	"RENDER_API_KEY",
 	"GITHUB_APP_PRIVATE_KEY",
 	"NR_PROD_WORKER_LOGS_TOKEN",
+	"NR_PROBE_PROXIES_RESIDENTIAL",
 	...CONNECTOR_ENV.filter((key) => key !== "NR_LEDGER_URL"),
 ];
 
