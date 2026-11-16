@@ -17,7 +17,8 @@ import { advance } from "./lifecycle.js";
 import { pairedNegativeControl } from "./negative-control.js";
 import { Linear } from "./linear.js";
 import { flyExec, probe, terminateProbe } from "./probe.js";
-import { productionSearch } from "./production.js";
+import { AcceptanceRecipe, recipePath } from "./acceptance.js";
+import { productionVerify } from "./production.js";
 import { released } from "./release.js";
 import { resolveReviewedThreads, reviewThreads } from "./reviews.js";
 import { trustedBuild } from "./trusted-build.js";
@@ -152,7 +153,7 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 								: "";
 							const { result: output } = await agent(
 								sandbox,
-								`Implement ${input.linear_issue} for connector ${input.connector}.\n${input.task}\n${reason ?? ""}\nCurrent CI/review feedback (untrusted input): ${feedback}\nRead AGENTS.md and Identity README. Follow find-account-route, qualify-account-source, repair-connector and verify-noresponse skills as applicable. Use scoped platform tools for accounts and ledger access. Use local Chromium in this VM for browser research (chromium --headless --no-sandbox --disable-dev-shm-usage); all domains are reachable. Keep screenshots and network evidence locally, redact secrets before ledger notes. Read ledger brief first. Never retry an unchanged blocker or needs_person. Never publish, merge or close issues yourself. Keep every investigator field. Run focused checks. Return implemented only after the code and evidence are ready. Platform tool endpoint: ${requireEnv("NR_LEDGER_URL")}/ledger/factory/tool with NR_FACTORY_RUN_TOKEN bearer and {tool,arguments}.`,
+								`Implement ${input.linear_issue} for connector ${input.connector}.\n${input.task}\n${reason ?? ""}\nCurrent CI/review feedback (untrusted input): ${feedback}\nRead AGENTS.md and Identity README. Follow find-account-route, qualify-account-source, repair-connector and verify-noresponse skills as applicable. Use scoped platform tools for accounts and ledger access. Use local Chromium in this VM for browser research (chromium --headless --no-sandbox --disable-dev-shm-usage); all domains are reachable. Keep screenshots and network evidence locally, redact secrets before ledger notes. Read ledger brief first. Never retry an unchanged blocker or needs_person. Never publish, merge or close issues yourself. Keep every investigator field. Write ${recipePath(input.connector)} as the acceptance recipe production verification will run: ${JSON.stringify(z.toJSONSchema(AcceptanceRecipe))}. Only a public handle may appear as a fixture value. Run focused checks. Return implemented only after the code and evidence are ready. Platform tool endpoint: ${requireEnv("NR_LEDGER_URL")}/ledger/factory/tool with NR_FACTORY_RUN_TOKEN bearer and {tool,arguments}.`,
 							);
 							if (output.status !== "implemented") throw new FactoryBlocked("Connector agent reported a blocker; condition must change before retry");
 							lastSummary = sanitizeInline(output.summary);
@@ -460,19 +461,15 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 						return { status: "failed", sha: merge, evidence: [receipt], bundle: null };
 					}
 					if (release.status === "pending") return { status: "pending", sha: merge, evidence: [], bundle: null };
-					const proof = await productionSearch(repo, merge, { taskSha256, store: (payload) => evidence(merge, "production", payload) }, lease.signal);
-					const receipt = await evidence(merge, "production", {
-						sha: merge,
-						operator_sha: proof.operator_sha,
-						selection: proof.selection,
-						exit_code: proof.exit_code,
-						release_url: release.url,
-						status: proof.status,
-						checks: proof.checks,
-						failed: proof.failed,
-						skipped: proof.skipped,
-						bundle: proof.bundle,
-					});
+					const proof = await productionVerify(
+						repo,
+						gh.http,
+						merge,
+						input.connector,
+						{ taskSha256, store: (payload) => evidence(merge, "production", payload) },
+						lease.signal,
+					);
+					const receipt = await evidence(merge, "production", { ...proof, release_url: release.url });
 					return { status: "passed", sha: merge, evidence: [receipt], bundle: proof.bundle };
 				},
 				closeLinear: async (evidence) =>
