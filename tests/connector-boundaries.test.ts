@@ -29,7 +29,7 @@ describe("factory trust boundaries", () => {
 	it("sends only run and subscription credentials to the guest and never in command arguments", async () => {
 		const sandbox = {
 			id: "s1",
-			upload: vi.fn(async () => {}),
+			upload: vi.fn(async (_path: string, _contents: string | Uint8Array) => {}),
 			download: vi.fn(),
 			close: vi.fn(),
 			exec: vi.fn(async (command: string) => ({
@@ -48,6 +48,16 @@ describe("factory trust boundaries", () => {
 			seconds: 30,
 		});
 		expect(JSON.stringify(sandbox.exec.mock.calls)).not.toContain("secret");
+		const input = sandbox.upload.mock.calls.find(([path]) => path.endsWith("/input.json"))?.[1];
+		expect(JSON.parse(String(input)).schema).toMatchObject({
+			$schema: "http://json-schema.org/draft-07/schema#",
+			additionalProperties: false,
+			properties: {
+				summary: { minLength: 1, maxLength: 10000 },
+				evidence: { maxItems: 100, items: { minLength: 1, maxLength: 500 } },
+				addressed_threads: { maxItems: 100, items: { minLength: 1, maxLength: 256 } },
+			},
+		});
 		expect(sandbox.exec.mock.calls.at(-1)?.[0]).toMatch(/^rm -rf/);
 	});
 });

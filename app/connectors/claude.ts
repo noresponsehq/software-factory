@@ -28,7 +28,7 @@ export async function runClaude(
 	if (create.exitCode !== 0) throw new Error("Cannot prepare Claude runtime");
 	try {
 		await sandbox.upload(`${dir}/launch.mjs`, await readFile(new URL("../../sandbox/claude-launch.mjs", import.meta.url)));
-		await sandbox.upload(`${dir}/input.json`, JSON.stringify({ ...input, schema: z.toJSONSchema(AgentResult) }));
+		await sandbox.upload(`${dir}/input.json`, JSON.stringify({ ...input, schema: z.toJSONSchema(AgentResult, { target: "draft-07" }) }));
 		const result = await sandbox.exec(`/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin node ${shq(`${dir}/launch.mjs`)} ${shq(dir)}`, {
 			timeoutMs: (input.seconds + 30) * 1000,
 		});
