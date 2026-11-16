@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { FailureClass, VerificationBundle } from "./bundle.js";
 import { FactoryFailure } from "./failure.js";
+import { TrustedControl } from "./trusted-controls.js";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const name = z
@@ -11,20 +12,20 @@ const name = z
 // The recipe lives at this path in the merged commit, so it is reviewed with the change and cannot be edited after merge.
 export const recipePath = (connector: string) => `apps/identity/internal/connectors/${name.parse(connector)}/acceptance.json`;
 
+export const ControlReference = z.strictObject({
+	connector: name,
+	variant: TrustedControl.shape.variant,
+	rev: z.number().int().positive(),
+});
+const Fixture = z.union([
+	z.strictObject({ ref: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/), identifier: z.literal("username"), platform: name.optional(), value: z.string().min(1).max(320) }),
+	z.strictObject({ ref: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/), identifier: z.enum(["email", "phone", "username"]), control: ControlReference }),
+]);
+
 export const AcceptanceRecipe = z.strictObject({
 	connector: name,
 	behaviour: z.string().min(1).max(500),
-	fixtures: z
-		.array(
-			z.strictObject({
-				ref: z.string().min(1).max(100),
-				identifier: z.enum(["email", "phone", "username"]),
-				platform: name.optional(),
-				value: z.string().min(1).max(320).optional(),
-			}),
-		)
-		.min(1)
-		.max(5),
+	fixtures: z.array(Fixture).min(1).max(5),
 	requires: z.strictObject({ session: z.boolean(), route: z.string().min(1).max(200).nullable() }),
 	operation: z.strictObject({ kind: z.literal("group_person_lookup"), fixture: z.string().min(1).max(100) }),
 	expect: z.strictObject({
@@ -36,6 +37,30 @@ export const AcceptanceRecipe = z.strictObject({
 });
 export type AcceptanceRecipe = z.infer<typeof AcceptanceRecipe>;
 
+export async function resolveFixture(recipe: AcceptanceRecipe, read: (connector: string) => Promise<unknown>, clock: () => number = Date.now) {
+	const fixture = recipe.fixtures.find((f) => f.ref === recipe.operation.fixture);
+	const refused = () => proofFailure("fixture_unresolved", { fixture: recipe.operation.fixture });
+	if (!fixture) throw refused();
+	let value: string;
+	if ("control" in fixture) {
+		if (fixture.control.connector !== recipe.connector) throw refused();
+		try {
+			const controls = z.array(TrustedControl).parse(await read(recipe.connector));
+			const selected = controls.filter((c) => c.connector === recipe.connector && c.variant === fixture.control.variant && c.rev === fixture.control.rev);
+			if (selected.length !== 1) throw refused();
+			const control = selected[0] as TrustedControl;
+			if (control.stale || Date.parse(control.fresh_until) <= clock() || control.written_role !== "operator" ||
+				(control.by === "handle" ? "username" : control.by) !== fixture.identifier || control.found !== (recipe.expect.execution === "found")) throw refused();
+			value = control.value;
+		} catch {
+			throw refused();
+		}
+	} else value = fixture.value;
+	return fixture.identifier === "username"
+		? { handles: [{ platform: "platform" in fixture ? fixture.platform ?? recipe.connector : recipe.connector, handle: value }] }
+		: { [fixture.identifier]: value };
+}
+
 export type ProofReason =
 	| "acceptance_recipe_missing"
 	| "fixture_unresolved"
@@ -44,6 +69,7 @@ export type ProofReason =
 	| "fields_missing"
 	| "ledger_revision_not_observed"
 	| "stale_build"
+	| "lookup_unavailable"
 	| "production_kept_moving";
 
 const PROOF_CLASS: Record<ProofReason, FailureClass> = {
@@ -54,6 +80,7 @@ const PROOF_CLASS: Record<ProofReason, FailureClass> = {
 	fields_missing: "product_failure",
 	ledger_revision_not_observed: "environment_failure",
 	stale_build: "superseded_release",
+	lookup_unavailable: "environment_failure",
 	production_kept_moving: "superseded_release",
 };
 
@@ -81,7 +108,10 @@ export function proveBehaviour(recipe: AcceptanceRecipe, rawLookup: unknown) {
 	if (!fixture) throw proofFailure("fixture_unresolved", { fixture: recipe.operation.fixture });
 	const lanes = lookup.data.checks.filter((check) => check.identifier === fixture.identifier);
 	const unanswered = lanes.flatMap((lane) => lane.unanswered).find((miss) => miss.connector === recipe.connector);
-	if (unanswered) throw proofFailure("connector_unanswered", { connector: recipe.connector, source_reason: unanswered.reason });
+	if (unanswered) {
+		const reason = z.enum(["timed_out", "rate_limited", "blocked", "source_error", "unavailable", "deferred", "insufficient_evidence"]).safeParse(unanswered.reason);
+		throw proofFailure("connector_unanswered", { connector: recipe.connector, source_reason: reason.success ? reason.data : "unrecognized_failure" });
+	}
 	const records = lookup.data.records.filter((record) => record.source.connector === recipe.connector);
 	if (recipe.expect.execution === "not_found") {
 		if (records.length) throw proofFailure("connector_not_executed", { connector: recipe.connector, detail: "expected not_found, connector found" });
