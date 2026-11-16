@@ -131,3 +131,31 @@ it("aborts explicit CAS loss and preserves provider cleanup when its journal wri
 	await expect(lease.exclusive(async () => "allowed")).rejects.toThrow("lease lost");
 	await lease.stop();
 });
+
+it("enforces an elapsed host deadline even before the timer callback can run", async () => {
+	vi.useFakeTimers();
+	const claim: Claimed = {
+		status: "claimed",
+		run_id: "r",
+		token: "offline",
+		expires_at: "later",
+		state: { cleanup_only: false, phase: "research", version: 1, resource_charges: [], evidence_ids: [] },
+	};
+	const lease = new Lease(new Ledger("https://ledger.invalid", "offline"), claim, 3600, 1);
+	const close = vi.fn(async () => {});
+	const lateClose = vi.fn(async () => {});
+	const action = vi.fn(async () => {});
+	try {
+		await lease.trackCleanup(close);
+		vi.setSystemTime(Date.now() + 2000);
+		await expect(lease.exclusive(action)).rejects.toThrow("lease lost");
+		expect(lease.signal.aborted).toBe(true);
+		expect(close).toHaveBeenCalledOnce();
+		expect(action).not.toHaveBeenCalled();
+		await expect(lease.trackCleanup(lateClose)).rejects.toThrow("lease lost");
+		expect(lateClose).toHaveBeenCalledOnce();
+	} finally {
+		await lease.stop();
+		vi.useRealTimers();
+	}
+});

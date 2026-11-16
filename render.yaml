@@ -34,8 +34,8 @@ projects:
             name: factory-workflows
             region: oregon
             runtime: node
-            buildCommand: npm ci
-            startCommand: npm run start:workflows
+            buildCommand: npm ci && bash scripts/install-host-tools.sh
+            startCommand: bash scripts/start-workflows.sh
             envVars:
               - fromGroup: software-factory-shared
               - fromGroup: software-factory-workflows

@@ -20,24 +20,26 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 	try {
 		signal?.throwIfAborted();
 		const cleanEnv = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
-		await exec("git", ["init", dir], { env: cleanEnv, signal });
-		await exec("git", ["-C", dir, "remote", "add", "origin", `https://github.com/${repo.fullName}.git`], { env: cleanEnv, signal });
+		const checkout = async (fullName: string, name: string, sha: string, destination: string) => {
+			await exec("git", ["init", destination], { env: cleanEnv, signal });
+			await exec("git", ["-C", destination, "remote", "add", "origin", `https://github.com/${fullName}.git`], { env: cleanEnv, signal });
+			const readToken = await githubToken({ installationId: repo.installationId, repo: name, permissions: { contents: "read" } });
+			await exec("git", ["-C", destination, "fetch", "--depth=1", "origin", sha], {
+				env: {
+					...cleanEnv,
+					GIT_CONFIG_COUNT: "1",
+					GIT_CONFIG_KEY_0: "http.extraHeader",
+					GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${readToken}`).toString("base64")}`,
+				},
+				timeout: 120000,
+				signal,
+			});
+			await exec("git", ["-C", destination, "checkout", "--detach", sha], { env: cleanEnv, signal });
+			const actual = await exec("git", ["-C", destination, "rev-parse", "HEAD"], { env: cleanEnv, signal });
+			if (actual.stdout.trim() !== sha) throw new Error("Trusted source revision mismatch");
+		};
 		stage = "fetch_operator";
-		const readToken = await githubToken({ installationId: repo.installationId, repo: repo.name, permissions: { contents: "read" } });
-		await exec("git", ["-C", dir, "fetch", "--depth=1", "origin", trusted], {
-			env: {
-				...cleanEnv,
-				GIT_CONFIG_COUNT: "1",
-				GIT_CONFIG_KEY_0: "http.extraHeader",
-				GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${readToken}`).toString("base64")}`,
-			},
-			timeout: 120000,
-			signal,
-		});
-		stage = "checkout_operator";
-		await exec("git", ["-C", dir, "checkout", "--detach", trusted], { env: cleanEnv, signal });
-		const actual = await exec("git", ["-C", dir, "rev-parse", "HEAD"], { env: cleanEnv, signal });
-		if (actual.stdout.trim() !== trusted) throw new Error("Trusted operator revision mismatch");
+		await checkout(repo.fullName, repo.name, trusted, dir);
 		stage = "version_before";
 		const before = z
 			.object({ build_version: z.string() })
@@ -50,6 +52,15 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 		await writeFile(empty, "", { mode: 0o600 });
 		const image = `registry.fly.io/nr-ii-prod-api:${merge}`;
 		const identity = join(dir, "apps/identity");
+		stage = "fetch_sdk_generator";
+		const generator = z
+			.strictObject({
+				repository: z.literal("https://github.com/noresponsehq/noresponse-openapi-generation.git"),
+				commit: z.string().regex(/^[a-f0-9]{40}$/),
+			})
+			.parse(JSON.parse(await readFile(join(identity, "sdks/generator.lock"), "utf8")));
+		const generatorSource = join(dir, "trusted-sdk-generator");
+		await checkout("noresponsehq/noresponse-openapi-generation", "noresponse-openapi-generation", generator.commit, generatorSource);
 		stage = "install_regression";
 		await exec("npm", ["ci", "--ignore-scripts"], { cwd: join(identity, "integrations/regression"), env: cleanEnv, timeout: 120000, signal });
 		stage = "production_smoke";
@@ -62,6 +73,7 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 				NR_PROD_SMOKE_DIR: join(dir, "proof"),
 				NR_PROD_SEARCH_API_KEY: requireEnv("NR_PROD_SEARCH_API_KEY"),
 				NR_PROD_WORKER_LOGS_TOKEN: process.env.NR_PROD_WORKER_LOGS_TOKEN ?? "",
+				NORESPONSE_SDKGEN_SOURCE: generatorSource,
 			},
 			timeout: 900000,
 			signal,

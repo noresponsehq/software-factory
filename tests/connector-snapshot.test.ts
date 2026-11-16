@@ -79,3 +79,38 @@ it("cleans a held snapshot run and settles blocked without creating new resource
 	expect(fake.events).toContain("finish");
 	expect(fake.build).not.toHaveBeenCalled();
 });
+
+it.each(["heartbeat", "deadline"])("cancels an in-flight builder after %s ownership loss", async (failure) => {
+	service();
+	vi.useFakeTimers();
+	let started!: () => void;
+	const ready = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	let release!: () => void;
+	const paused = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	fake.build.mockImplementation(async (_client, _repo, _sha, deps) => {
+		await deps.allocation.started("owned");
+		started();
+		await paused;
+		deps.signal?.throwIfAborted();
+		fake.events.push("post-loss-provider-effect");
+		await deps.allocation.terminated("owned");
+		return { id: "snapshot-1" };
+	});
+	const operation = setupSnapshot(repo, sha).catch((error) => error);
+	try {
+		await ready;
+		if (failure === "heartbeat") vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 409 }));
+		await vi.advanceTimersByTimeAsync(failure === "heartbeat" ? 30000 : 3600000);
+		expect(fake.terminate).toHaveBeenCalledWith("owned");
+	} finally {
+		release();
+		await operation;
+		vi.useRealTimers();
+	}
+	expect(fake.events).not.toContain("post-loss-provider-effect");
+	expect(fake.events).not.toContain("finish");
+});

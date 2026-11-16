@@ -117,7 +117,7 @@ class FakeApi {
 				return { id, status: "creating", networkPolicy: input.networkPolicy, timeoutSeconds: input.timeoutSeconds };
 			},
 			async get(id: string) {
-				return { id, status: "running" };
+				return { id, status: self.terminated().includes(id) ? "terminated" : "running" };
 			},
 			async exec(id: string, command: string) {
 				self.calls.push({ op: "exec", id, command });
@@ -189,6 +189,30 @@ beforeEach(() => {
 });
 
 describe("buildSnapshot", () => {
+	it("stops builder operations on cancellation and keeps provider cleanup independent", async () => {
+		const abort = new AbortController();
+		const token = vi.fn(readToken);
+		const terminated = vi.fn(async () => {});
+		fake.overrides = (_id, command) => {
+			if (command.includes("/install-tools.sh")) abort.abort();
+			return [];
+		};
+		await expect(
+			buildSnapshot(client(), repo(), BASE_SHA, {
+				signal: abort.signal,
+				readToken: token,
+				allocation: { name: "nr-tmp-builder", started: async () => {}, terminated },
+			}),
+		).rejects.toThrow();
+		expect(fake.terminated()).toEqual(["sbx-1"]);
+		expect(terminated).toHaveBeenCalledWith("sbx-1");
+		expect(token).not.toHaveBeenCalled();
+		expect(fake.inputs("snapshot.create")).toEqual([]);
+	});
+	it("does not create a builder when already cancelled", async () => {
+		await expect(buildSnapshot(client(), repo(), BASE_SHA, { signal: AbortSignal.abort(), readToken })).rejects.toThrow();
+		expect(fake.calls).toEqual([]);
+	});
 	it("orders the build by trust and snapshots under the repository's name", async () => {
 		const built = await buildSnapshot(client(), repo(), BASE_SHA, { readToken });
 		expect(built).toMatchObject({ id: "snp-new", sandboxGroupId: "sbg-1", name: NAME });
@@ -231,7 +255,9 @@ describe("buildSnapshot", () => {
 		expect(clone).toContain("'credential.helper=!bash /opt/factory/app/build/git-credential-staged.sh /tmp/factory-stage/creds'");
 
 		// The install runs as the runner user, through as-runner.sh.
-		expect(fake.commands()).toContain("/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 3600 /bin/bash /opt/factory/app/as-runner.sh 'bash' '-c' 'npm ci'");
+		expect(fake.commands()).toContain(
+			"/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 3600 /bin/bash /opt/factory/app/as-runner.sh 'bash' '-c' 'npm ci'",
+		);
 
 		expect(fake.inputs("snapshot.create")).toEqual([{ sandboxId: "sbx-1", kind: "filesystem", name: NAME }]);
 		expect(fake.terminated()).toEqual(["sbx-1"]);
@@ -261,6 +287,7 @@ describe("buildSnapshot", () => {
 			"build/scrub-credentials.sh",
 			"collect-changes.sh",
 			"install-connector-tools.sh",
+			"install-go.sh",
 			"install-tools.sh",
 			"lockfile-hash.sh",
 			"run-agent.sh",
@@ -303,6 +330,17 @@ describe("buildSnapshot", () => {
 });
 
 describe("openSandbox", () => {
+	it("stops restored preparation on cancellation without cancelling provider cleanup", async () => {
+		const abort = new AbortController();
+		const token = vi.fn(readToken);
+		fake.overrides = (_id, command) => {
+			if (command.includes("verify.sh")) abort.abort();
+			return [];
+		};
+		await expect(openSandbox(repo(), { kind: "branch", name: "main" }, deps({ signal: abort.signal, readToken: token }))).rejects.toThrow();
+		expect(fake.terminated()).toEqual(["sbx-1"]);
+		expect(token).not.toHaveBeenCalled();
+	});
 	const deps = (extra: Partial<OpenSandboxDeps> = {}): OpenSandboxDeps => ({ client: client(), readToken, ...extra });
 
 	it("restores by snapshot name, verifies, and fetches a branch as the runner user", async () => {
@@ -374,7 +412,9 @@ describe("openSandbox", () => {
 	it("reinstalls as the runner user only when the lockfile hash changed", async () => {
 		fake.lockfileHash = "b".repeat(64);
 		await openSandbox(repo(), { kind: "branch", name: "main" }, deps());
-		expect(fake.commands()).toContain("/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 3600 /bin/bash /opt/factory/app/as-runner.sh 'bash' '-c' 'npm ci'");
+		expect(fake.commands()).toContain(
+			"/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 3600 /bin/bash /opt/factory/app/as-runner.sh 'bash' '-c' 'npm ci'",
+		);
 		expect(fake.execIndex("'bash' '-c' 'npm ci'")).toBeGreaterThan(fake.execIndex("'checkout'"));
 	});
 

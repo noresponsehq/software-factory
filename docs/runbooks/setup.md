@@ -56,6 +56,14 @@ deployed values. Doctor checks configuration, GitHub access, registered tasks,
 ledger operator cursor, Linear authentication and Fly probe machine access.
 Presence of the subscription token is not proof of a successful Claude run.
 
+The workflows build installs Fly CLI 0.5.10, uv 0.12.2 and Go 1.27.4 under
+`.factory-tools`, checking pinned archive hashes. Its start command checks these
+binaries and git, jq, Node, npm, curl and Python before registering tasks. The
+production search builds the SDK generator at the trusted operator checkout's
+`generator.lock` revision. The App must also be installed on
+`noresponsehq/noresponse-openapi-generation` with contents read access. Its
+repository-scoped fetch token is removed before building or running that source.
+
 ## Workstation image
 
 `sandbox/install-connector-tools.sh` installs pinned Claude Code, Go, Python,

@@ -14,11 +14,11 @@ export class Lease {
 	private async lose() {
 		this.failed = true;
 		this.abort.abort();
-		this.loss ??= Promise.allSettled([...this.sandboxes].map((s) => Promise.resolve().then(() => s.close()))).then(() => {});
+		this.loss ??= Promise.allSettled([...this.cleanups].map((close) => Promise.resolve().then(close))).then(() => {});
 		await this.loss;
 	}
 	private timer: ReturnType<typeof setInterval> | undefined;
-	private readonly sandboxes = new Set<Sandbox>();
+	private readonly cleanups = new Set<() => Promise<void>>();
 	constructor(
 		readonly ledger: Ledger,
 		readonly claim: Claimed,
@@ -30,7 +30,8 @@ export class Lease {
 	async exclusive<T>(action: () => Promise<T>): Promise<T> {
 		if (this.failed) throw new Error("Factory lease lost");
 		const next = this.queue.then(async () => {
-			if (this.failed || Date.now() >= this.deadline) throw new Error("Factory lease lost");
+			if (!this.failed && Date.now() >= this.deadline) await this.lose();
+			if (this.failed) throw new Error("Factory lease lost");
 			return action();
 		});
 		this.queue = next.catch(() => {});
@@ -46,13 +47,21 @@ export class Lease {
 			}
 		});
 	}
+	async trackCleanup(close: () => Promise<void>) {
+		if (!this.failed && Date.now() >= this.deadline) await this.lose();
+		if (this.failed || Date.now() >= this.deadline) {
+			await close();
+			throw new Error("Factory absolute deadline or lease lost");
+		}
+		this.cleanups.add(close);
+	}
 	track<T extends Sandbox>(sandbox: T): T {
 		const execute = sandbox.exec.bind(sandbox);
 		sandbox.exec = (command, opts = {}) => {
 			if (this.failed || Date.now() >= this.deadline) throw new Error("Factory absolute deadline or lease lost");
 			return execute(command, { ...opts, signal: this.signal, timeoutMs: Math.min(opts.timeoutMs ?? 3600000, this.deadline - Date.now()) });
 		};
-		this.sandboxes.add(sandbox);
+		this.cleanups.add(() => sandbox.close());
 		return sandbox;
 	}
 	start() {

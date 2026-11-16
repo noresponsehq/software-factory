@@ -46,22 +46,42 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 	const lease = new Lease(ledger, claim, input.lease_seconds, executionSeconds);
 	const checkpoint = (patch = {}) => lease.checkpoint(patch);
 	const budget = new Budget(claim, lease);
+	const cleanupPending = () =>
+		claim.state.resource_charges.some((resource) => resource.kind !== "render_workflow_flex" && resource.status !== "terminated");
+	const requireCleanup = () => {
+		if (cleanupPending()) throw new Error("Provider cleanup is unconfirmed; retain unfinished run");
+	};
+	const finish = (outcome: "blocked" | "completed" | "failed", reason: string) =>
+		lease.exclusive(() => {
+			requireCleanup();
+			return ledger.finish(claim, outcome, reason, budget.charged());
+		});
 	const open = async (name: string) => {
 		const key = `render-${randomUUID()}`;
 		const seconds = 3600;
 		const update = await budget.reserve(key, "render_sandbox", upperBound(0.316, seconds) + costPolicy().sandboxTrafficUsd);
+		const terminate = async (id: string) => {
+			await sandboxClient().terminate(id);
+			await sandboxClient().confirmTerminated(id);
+		};
 		const sandbox = await openSandbox(
 			repo,
 			{ kind: "branch", name },
-			{ resourceName: `nr-tmp-${key}`, timeoutSeconds: seconds, onCreated: (id) => update("started", id) },
+			{
+				resourceName: `nr-tmp-${key}`,
+				timeoutSeconds: seconds,
+				signal: lease.signal,
+				onCreated: async (id) => {
+					await lease.trackCleanup(() => terminate(id));
+					await update("started", id);
+				},
+			},
 		);
-		const close = sandbox.close.bind(sandbox);
 		sandbox.close = async () => {
-			await close();
-			await sandboxClient().confirmTerminated(sandbox.id);
+			await terminate(sandbox.id);
 			await update("terminated", sandbox.id);
 		};
-		return lease.track(sandbox);
+		return sandbox;
 	};
 	const evidence = (
 		head: string,
@@ -71,11 +91,11 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 	lease.start();
 	try {
 		await checkpoint();
-		let cleanupPending = false;
+		let unresolved = false;
 		for (const resource of claim.state.resource_charges) {
 			if (resource.kind === "render_workflow_flex" || resource.status === "terminated") continue;
 			if (!resource.resource_id) {
-				cleanupPending = true;
+				unresolved = true;
 				continue;
 			}
 			try {
@@ -85,17 +105,17 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 				} else if (resource.kind === "fly_probe") {
 					await terminateProbe(flyExec(requireEnv("FACTORY_FLY_API_TOKEN")), resource.resource_id);
 				} else {
-					cleanupPending = true;
+					unresolved = true;
 					continue;
 				}
 				await checkpoint({ resource_charges: [{ ...resource, status: "terminated" }] });
 			} catch {
-				cleanupPending = true;
+				unresolved = true;
 			}
 		}
-		if (cleanupPending || lease.signal.aborted) return { status: "cleanup_pending", run_id: claim.run_id };
+		if (unresolved || lease.signal.aborted) return { status: "cleanup_pending", run_id: claim.run_id };
 		if (claim.state.cleanup_only) {
-			await lease.exclusive(() => ledger.finish(claim, "blocked", "Connector is held; owned resource cleanup completed", budget.charged()));
+			await finish("blocked", "Connector is held; owned resource cleanup completed");
 			return { status: "blocked", run_id: claim.run_id, reason: "needs_person" };
 		}
 		await accountDaily(ledger);
@@ -336,23 +356,27 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 					});
 					return { status: "passed", sha: merge, evidence: [receipt] };
 				},
-				closeLinear: async (evidence) => new Linear(requireEnv("LINEAR_API_KEY")).complete(input.linear_issue, evidence),
+				closeLinear: async (evidence) =>
+					lease.exclusive(() => {
+						requireCleanup();
+						return new Linear(requireEnv("LINEAR_API_KEY")).complete(input.linear_issue, evidence);
+					}),
 				block: async (reason) => {
-					await lease.exclusive(() => ledger.finish(claim, "blocked", reason, budget.charged()));
+					await finish("blocked", reason);
 				},
 			},
 			2,
 		);
+		requireCleanup();
 		if (result === "waiting") {
 			await lease.stop();
 			await lease.exclusive(() => ledger.heartbeat(claim, 30));
 		}
-		if (result === "completed") await lease.exclusive(() => ledger.finish(claim, "completed", "Production verified", budget.charged()));
+		if (result === "completed") await finish("completed", "Production verified");
 		return { status: result, run_id: claim.run_id, phase: claim.state.phase };
 	} catch (error) {
 		if (lease.signal.aborted) return { status: "ownership_lost", run_id: claim.run_id };
-		if (claim.state.resource_charges.some((resource) => resource.kind !== "render_workflow_flex" && resource.status !== "terminated"))
-			return { status: "cleanup_pending", run_id: claim.run_id };
+		if (cleanupPending()) return { status: "cleanup_pending", run_id: claim.run_id };
 		const head = claim.state.merge_sha ?? claim.state.head_sha;
 		if (head && !claim.state.cleanup_only) {
 			const kind = error instanceof FactoryFailure ? error.kind : claim.state.phase === "implementation" ? "implementation" : "verification";
@@ -360,13 +384,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 				error instanceof FactoryFailure ? error.payload : { status: "fail", stage: claim.state.phase, reason: "execution_or_ownership_failed" };
 			await evidence(head, kind, payload);
 		}
-		await lease.exclusive(() =>
-			ledger.finish(
-				claim,
-				error instanceof FactoryBlocked ? "blocked" : "failed",
-				error instanceof FactoryBlocked ? error.message : "Factory execution failed; inspect retained receipts before changing conditions",
-				budget.charged(),
-			),
+		await finish(
+			error instanceof FactoryBlocked ? "blocked" : "failed",
+			error instanceof FactoryBlocked ? error.message : "Factory execution failed; inspect retained receipts before changing conditions",
 		);
 		if (error instanceof FactoryBlocked) return { status: "blocked", run_id: claim.run_id, reason: error.message };
 		throw new Error("Factory execution failed; reservation charged conservatively");

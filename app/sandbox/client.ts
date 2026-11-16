@@ -62,8 +62,15 @@ export class SandboxClient {
 	constructor(
 		readonly api: SandboxApi,
 		timings: Partial<SandboxTimings> = {},
+		readonly signal?: AbortSignal,
 	) {
 		this.t = { ...DEFAULT_TIMINGS, ...timings };
+	}
+
+	withSignal(signal: AbortSignal): SandboxClient {
+		const scoped = new SandboxClient(this.api, this.t, signal);
+		scoped.call = (fn, opts = {}) => this.call(fn, { ...opts, signal: opts.signal ? AbortSignal.any([signal, opts.signal]) : signal });
+		return scoped;
 	}
 
 	/** Paces every API call and retries the given statuses (429 by default, which is never processed server-side). */
@@ -71,10 +78,12 @@ export class SandboxClient {
 		const retryOn = opts.retryOn ?? [429];
 		const attempts = opts.attempts ?? 5;
 		for (let attempt = 1; ; attempt++) {
+			opts.signal?.throwIfAborted();
 			const now = Date.now();
 			const at = Math.max(now, this.#nextRequestAt);
 			this.#nextRequestAt = at + this.t.minRequestIntervalMs;
 			if (at > now) await sleep(at - now, undefined, { signal: opts.signal });
+			opts.signal?.throwIfAborted();
 			try {
 				return await fn();
 			} catch (err) {
@@ -87,7 +96,7 @@ export class SandboxClient {
 
 	async exec(id: string, command: string, opts: ClientExecOptions): Promise<ExecResult> {
 		const timeout = AbortSignal.timeout(opts.timeoutMs);
-		const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+		const signal = AbortSignal.any([timeout, ...[this.signal, opts.signal].filter((s): s is AbortSignal => s !== undefined)]);
 		const retry = opts.waitReady
 			? { retryOn: READY_RETRY, attempts: Math.ceil(this.t.bootTimeoutMs / Math.max(this.t.pollMs, 1)) }
 			: { retryOn: TRANSIENT };
@@ -122,10 +131,12 @@ export class SandboxClient {
 		data: string | Buffer,
 		opts: { contentType?: SandboxUploadContentType; signal?: AbortSignal } = {},
 	): Promise<void> {
+		opts = { ...opts, signal: opts.signal && this.signal ? AbortSignal.any([opts.signal, this.signal]) : opts.signal ?? this.signal };
 		await this.call(() => this.api.upload(id, path, data, undefined, opts), { retryOn: TRANSIENT, signal: opts.signal });
 	}
 
 	async download(id: string, path: string, signal?: AbortSignal): Promise<Buffer> {
+		signal = signal && this.signal ? AbortSignal.any([signal, this.signal]) : signal ?? this.signal;
 		const file = await this.call(() => this.api.download(id, path, undefined, signal), { retryOn: TRANSIENT, signal });
 		return file.data;
 	}
@@ -137,7 +148,7 @@ export class SandboxClient {
 			if (status === "running") return;
 			if (status === "errored" || status === "terminated") throw new Error(`sandbox ${id} is ${status}`);
 			if (Date.now() > until) throw new Error(`sandbox ${id} still ${status} after ${this.t.bootTimeoutMs}ms`);
-			await sleep(this.t.pollMs);
+			await sleep(this.t.pollMs, undefined, { signal: this.signal });
 		}
 	}
 

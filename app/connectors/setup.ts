@@ -53,7 +53,18 @@ export async function setupSnapshot(repo: RepoContext, sha: string) {
 		const key = `builder-${randomUUID()}`;
 		const update = await budget.reserve(key, "render_builder", upperBound(0.316, 3600) + costPolicy().sandboxTrafficUsd);
 		const built = await buildSnapshot(sandboxClient(), repo, sha, {
-			allocation: { name: `nr-tmp-${key}`, started: (id) => update("started", id), terminated: (id) => update("terminated", id) },
+			signal: lease.signal,
+			allocation: {
+				name: `nr-tmp-${key}`,
+				started: async (id) => {
+					await lease.trackCleanup(async () => {
+						await sandboxClient().terminate(id);
+						await sandboxClient().confirmTerminated(id);
+					});
+					await update("started", id);
+				},
+				terminated: (id) => update("terminated", id),
+			},
 		});
 		await lease.exclusive(() => ledger.finish(claim, "blocked", `Snapshot allowance accounted: ${built.id}`, budget.charged()));
 		return { snapshotId: built.id, repo: repo.fullName, sha };

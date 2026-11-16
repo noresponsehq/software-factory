@@ -71,9 +71,10 @@ export interface OpenSandboxDeps extends SnapshotDeps {
  */
 export async function openSandbox(repo: RepoContext, ref: SandboxRef, deps: OpenSandboxDeps = {}): Promise<OpenedSandbox> {
 	checkRef(ref);
-	const client = deps.client ?? sandboxClient();
+	const cleanupClient = deps.client ?? sandboxClient();
+	const client = deps.signal ? cleanupClient.withSignal(deps.signal) : cleanupClient;
 	const egress = taskEgress(repo);
-	const id = await createFromSnapshot(client, repo, egress, deps);
+	const id = await createFromSnapshot(client, repo, egress, deps, cleanupClient);
 	try {
 		await client.waitRunning(id);
 		await ensureRunnerPayload(client, id);
@@ -92,9 +93,10 @@ export async function openSandbox(repo: RepoContext, ref: SandboxRef, deps: Open
 				await runInstall(client, id, install, egressHint(repo, egress));
 			}
 		}
-		return { ...connectSandbox(id, client), headSha, manifest };
+		deps.signal?.throwIfAborted();
+		return { ...connectSandbox(id, client), close: () => cleanupClient.terminate(id), headSha, manifest };
 	} catch (err) {
-		await client.terminateQuietly(id);
+		await cleanupClient.terminateQuietly(id);
 		throw err;
 	}
 }
@@ -127,7 +129,13 @@ function isSnapshotUnavailable(err: unknown): boolean {
 	return err instanceof SandboxSnapshotNotFoundError || err instanceof SandboxSnapshotNotReadyError;
 }
 
-async function createFromSnapshot(client: SandboxClient, repo: RepoContext, egress: SandboxNetworkPolicy, deps: OpenSandboxDeps): Promise<string> {
+async function createFromSnapshot(
+	client: SandboxClient,
+	repo: RepoContext,
+	egress: SandboxNetworkPolicy,
+	deps: OpenSandboxDeps,
+	cleanupClient: SandboxClient,
+): Promise<string> {
 	const name = snapshotName(repo);
 	const create = async () =>
 		(
@@ -146,7 +154,7 @@ async function createFromSnapshot(client: SandboxClient, repo: RepoContext, egre
 		try {
 			await deps.onCreated?.(id);
 		} catch (error) {
-			await client.terminateQuietly(id);
+			await cleanupClient.terminateQuietly(id);
 			throw error;
 		}
 		return id;
@@ -162,7 +170,7 @@ async function createFromSnapshot(client: SandboxClient, repo: RepoContext, egre
 		try {
 			await deps.onCreated?.(id);
 		} catch (error) {
-			await client.terminateQuietly(id);
+			await cleanupClient.terminateQuietly(id);
 			throw error;
 		}
 		return id;
