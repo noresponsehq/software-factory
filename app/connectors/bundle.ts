@@ -22,6 +22,7 @@ export type Assertion = z.infer<typeof Assertion>;
 export const NegativeControl = z.strictObject({
 	command: z.string().min(1).max(1000),
 	fixture_sha256: Digest,
+	tests: z.array(z.string().min(1).max(500)).min(1).max(200),
 	unfixed: z.strictObject({ sha: Sha, exit_code: z.number().int().nullable() }),
 	candidate: z.strictObject({ sha: Sha, exit_code: z.number().int().nullable() }),
 });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { affectedConnectors, trustedBuild } from "../app/connectors/trusted-build.js";
+import { affectedConnectors, changeScope, trustedBuild } from "../app/connectors/trusted-build.js";
 import { assertProbe, type Control } from "../app/connectors/probe-assertions.js";
 import type { GitHubHttp } from "../app/github/index.js";
 import type { OpenedSandbox } from "../app/sandbox/index.js";
@@ -69,6 +69,11 @@ function boundary(paths: string[]) {
 }
 
 describe("independent trusted build invariants", () => {
+	it("admits only the selected connector acceptance recipe", () => {
+		expect(changeScope(["apps/identity/internal/connectors/gravatar/gravatar.go", "apps/identity/internal/connectors/gravatar/acceptance.json"], "gravatar")).toMatchObject({ kind: "connector" });
+		for (const path of ["apps/identity/internal/connectors/github/acceptance.json", "apps/identity/internal/connectors/gravatar/other.json", "apps/identity/internal/connectors/gravatar/../acceptance.json"])
+			expect(() => changeScope([path], "gravatar")).toThrow(/outside Identity/);
+	});
 	it("counts affected connectors once when the runtime appends its selected connector", () => {
 		const ids = Array.from({ length: 25 }, (_, i) => `platform${i}`);
 		const shared = "github.com/noresponsehq/noresponse/apps/identity/internal/cookies";

@@ -13,6 +13,7 @@ GitHub marker / assigned Linear / D1 health
   ├─ host validates and publishes candidate tree
   ├─ fresh Claude Code verification in another Render sandbox
   ├─ third sandbox pins main controls and builds lookup RPC
+  ├─ fourth sandbox runs regression tests on untouched main
   ├─ trusted host runs the probe on Fly iad
   ├─ ready PR → expected-head auto-merge → CI repairs
   └─ release SHA + production search → Linear completion
@@ -168,8 +169,11 @@ sensitive keeps only its digest and is listed as uncovered. A ledger outage
 fails the run.
 
 The verifier names its negative control as connector test files and a
-`go test -run` pattern. The host copies those files onto the trusted base, where
-the pattern must fail, and runs it on the candidate, where it must pass. The
+`go test -run` pattern. The host copies those files into a separate, untouched
+checkout of the trusted base as readable runner files. Structured Go output must
+show the same named tests failing on that base and passing on the candidate.
+Build failures, skipped tests, empty selections and permission errors cannot
+serve as negative evidence. Both logs are retained, including refused runs. The
 host, not the agent summary, refuses a review or production proof whose bundle
 is missing, malformed, for another revision, failing, without passing
 assertions or uploaded artifacts, or, for a candidate, without a valid negative

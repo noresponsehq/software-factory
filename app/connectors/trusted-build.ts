@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { GitHubHttp } from "../github/index.js";
 import { type OpenedSandbox, shq } from "../sandbox/index.js";
 import { FactoryBlocked } from "./failure.js";
+import { recipePath } from "./acceptance.js";
 import { Control } from "./probe-assertions.js";
 import { pinControls, type TrustedControl } from "./trusted-controls.js";
 
@@ -23,7 +24,7 @@ export function changeScope(paths: string[], connector: string): ChangeScope {
 	if (!paths.length) throw new Error("Candidate changes nothing");
 	const packages = new Set<string>();
 	for (const path of paths) {
-		if (generated.has(path)) continue;
+		if (generated.has(path) || path === recipePath(connector)) continue;
 		const parts = path.split("/");
 		if (
 			!path.startsWith(`${IDENTITY}internal/`) ||
@@ -75,6 +76,11 @@ export async function trustedBuild(
 	controlsOf: (connector: string) => Promise<TrustedControl[]>,
 ) {
 	const trusted = sandbox.headSha;
+	const uploadReadable = async (path: string, data: string | Buffer) => {
+		await sandbox.upload(path, data);
+		const result = await sandbox.exec(`chmod 0644 ${shq(path)}`);
+		if (result.exitCode !== 0) throw new Error("Cannot make trusted build input readable");
+	};
 	const compare = z
 		.object({ files: z.array(z.object({ filename: z.string(), previous_filename: z.string().optional() })).max(299) })
 		.parse(await http.json("GET", `/repos/${repo}/compare/${trusted}...${head}`));
@@ -99,12 +105,12 @@ export async function trustedBuild(
 	const mainPath = "/opt/factory/repo/apps/identity/cmd/probe/main.go";
 	const main = (await sandbox.download(mainPath)).toString();
 	if (main.split("func main() {").length !== 2) throw new Error("Trusted probe entry point changed");
-	await sandbox.upload(mainPath, main.replace("func main() {", "func originalProbeMain() {"));
-	await sandbox.upload(
+	await uploadReadable(mainPath, main.replace("func main() {", "func originalProbeMain() {"));
+	await uploadReadable(
 		"/opt/factory/repo/apps/identity/cmd/probe/factory_rpc.go",
 		await readFile(new URL("../../sandbox/probe-rpc.go", import.meta.url)),
 	);
-	await sandbox.upload("/opt/factory/app/control-pin.go", await readFile(new URL("../../sandbox/control-pin.go", import.meta.url)));
+	await uploadReadable("/opt/factory/app/control-pin.go", await readFile(new URL("../../sandbox/control-pin.go", import.meta.url)));
 	const pinned = scope.packages.filter((p) => /^apps\/identity\/internal\/connectors\/[a-z0-9_]+$/.test(p));
 	const pin = (pkg: string) =>
 		sandbox.exec(`go run /opt/factory/app/control-pin.go ${shq(`/opt/factory/repo/${pkg}/`)}`, { asRunner: true, timeoutMs: 120000 });
@@ -134,10 +140,11 @@ export async function trustedBuild(
 		payloads.push({ path: file.path, data });
 	}
 	for (const pkg of scope.packages) {
-		const prepare = await sandbox.exec(`mkdir -p ${shq(pkg)} && find ${shq(pkg)} -maxdepth 1 -type f -name '*.go' ! -name '*_test.go' -delete`);
+		const directory = `/opt/factory/repo/${pkg}`;
+		const prepare = await sandbox.exec(`mkdir -p ${shq(directory)} && find ${shq(directory)} -maxdepth 1 -type f -name '*.go' ! -name '*_test.go' -delete`);
 		if (prepare.exitCode !== 0) throw new Error("Cannot prepare trusted candidate overlay");
 	}
-	for (const file of payloads) await sandbox.upload(`/opt/factory/repo/${file.path}`, file.data);
+	for (const file of payloads) await uploadReadable(`/opt/factory/repo/${file.path}`, file.data);
 	const candidatePins = new Map<string, string>();
 	for (const pkg of originalPins.keys()) {
 		const result = await pin(pkg);
@@ -153,7 +160,7 @@ export async function trustedBuild(
 	].map((m) => m[1]);
 	if (!registered.includes(connector)) throw new Error("Candidate connector is not registered");
 	const folders = [...new Set([...imports, connector])].sort();
-	await sandbox.upload(
+	await uploadReadable(
 		"/opt/factory/repo/apps/identity/internal/connectors/folders.go",
 		`package connectors\n\nimport (\n${folders.map((f) => `\t_ "github.com/noresponsehq/noresponse/apps/identity/internal/connectors/${f}"`).join("\n")}\n)\n`,
 	);

@@ -22,6 +22,7 @@ export function candidateBundle(): VerificationBundle {
 		negative_control: {
 			command: "cd apps/identity && go test -count=1 -run 'TestMissing' ./internal/connectors/github/",
 			fixture_sha256: digest,
+			tests: ["github/TestMissing"],
 			unfixed: { sha: base, exit_code: 1 },
 			candidate: { sha: head, exit_code: 0 },
 		},

@@ -256,11 +256,18 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 										},
 										flyExec(requireEnv("FACTORY_FLY_API_TOKEN")),
 									);
-									const negative = await pairedNegativeControl(
-										output.negative_control,
-										input.connector,
-										{ sandbox: frozen, sha: frozen.headSha },
-										{ sandbox, sha: candidate.head },
+									const negative = await withSandbox(
+										() => open(repo.config.baseBranch),
+										async (unfixed) => {
+											if (unfixed.headSha !== frozen.headSha)
+												throw new FactoryFailure("verification", "superseded_release", { status: "fail", reason: "negative_base_moved" });
+											return pairedNegativeControl(
+												output.negative_control,
+												input.connector,
+												{ sandbox: unfixed, sha: unfixed.headSha },
+												{ sandbox, sha: candidate.head },
+											);
+										},
 									);
 									const { targets, ...binding } = source;
 									return {
@@ -287,7 +294,7 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 										),
 									},
 									{ name: "verifier/skills.sha256", content: Buffer.from(skillDigests) },
-									...(negative?.logs ?? []),
+									...(probeResult.negative.logs ?? []),
 								],
 								(payload) => evidence(candidate.head, "verification", payload),
 							);
