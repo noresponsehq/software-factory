@@ -35,35 +35,36 @@ export interface LabelSpec {
 export const LABELS: readonly LabelSpec[] = [
 	...(config.connectors
 		? [{ name: config.connectors.marker, color: "0e8a16", description: "Run the autonomous connector lifecycle", trigger: true }]
-		: []),
-	{
-		name: config.labels.triage,
-		color: "1d76db",
-		description: "software-factory: triage this issue and draft a spec",
-		trigger: true,
-	},
-	{
-		name: config.labels.specApproved,
-		color: "0e8a16",
-		description: "software-factory: implement the approved spec and open a draft PR",
-		trigger: true,
-	},
-	{
-		name: config.labels.prReview,
-		color: "5319e7",
-		description: "software-factory: review this pull request",
-		trigger: true,
-	},
-	{
-		name: config.labels.autopilot,
-		color: "c5def5",
-		description: "software-factory: run through a reviewed draft pull request",
-		trigger: true,
-	},
+		: [
+				{
+					name: config.labels.triage,
+					color: "1d76db",
+					description: "software-factory: triage this issue and draft a spec",
+					trigger: true,
+				},
+				{
+					name: config.labels.specApproved,
+					color: "0e8a16",
+					description: "software-factory: implement the approved spec and open a draft PR",
+					trigger: true,
+				},
+				{
+					name: config.labels.prReview,
+					color: "5319e7",
+					description: "software-factory: review this pull request",
+					trigger: true,
+				},
+				{
+					name: config.labels.autopilot,
+					color: "c5def5",
+					description: "software-factory: run through a reviewed draft pull request",
+					trigger: true,
+				},
+			]),
 	{ name: WORKING_LABEL, color: "fbca04", description: "software-factory is working on this", trigger: false },
 ];
 
-export type Service = "gateway" | "workflows";
+export type Service = "gateway" | "workflows" | "intake";
 
 /** The credential each agent's harness declares (app/agents/), once each, in agent order. Workflows sends them to its sandboxes. */
 export const HARNESS_KEY_ENV: readonly string[] = config.connectors
@@ -74,8 +75,21 @@ const CONNECTOR_ENV = config.connectors
 			"NR_LEDGER_URL",
 			"NR_FACTORY_OPERATOR_TOKEN",
 			"LINEAR_API_KEY",
-			"FLY_API_TOKEN",
+			"FACTORY_FLY_API_TOKEN",
 			"NR_PROD_SEARCH_API_KEY",
+			"FACTORY_GITHUB_INSTALLATION_ID",
+			"FACTORY_ACTOR",
+			"FACTORY_LINEAR_ASSIGNEE",
+			"FACTORY_LINEAR_TEAM",
+		]
+	: [];
+const INTAKE_ENV = config.connectors
+	? [
+			"NR_LEDGER_URL",
+			"NR_FACTORY_OPERATOR_TOKEN",
+			"LINEAR_API_KEY",
+			"GITHUB_APP_ID",
+			"GITHUB_APP_PRIVATE_KEY",
 			"FACTORY_GITHUB_INSTALLATION_ID",
 			"FACTORY_ACTOR",
 			"FACTORY_LINEAR_ASSIGNEE",
@@ -85,8 +99,14 @@ const CONNECTOR_ENV = config.connectors
 
 /** Each service's env vars, exactly as render.yaml declares them (through its env groups or directly). */
 export const SERVICE_ENV: Readonly<Record<Service, readonly string[]>> = {
-	gateway: ["GITHUB_WEBHOOK_SECRET", "RENDER_API_KEY", "RENDER_WORKFLOW_SLUG"],
+	gateway: [
+		"GITHUB_WEBHOOK_SECRET",
+		"RENDER_API_KEY",
+		"RENDER_WORKFLOW_SLUG",
+		...(config.connectors ? ["NR_LEDGER_URL", "NR_FACTORY_OPERATOR_TOKEN"] : []),
+	],
 	workflows: ["RENDER_API_KEY", "RENDER_WORKSPACE_ID", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", ...HARNESS_KEY_ENV, ...CONNECTOR_ENV],
+	intake: ["RENDER_API_KEY", "RENDER_WORKFLOW_SLUG", ...INTAKE_ENV],
 };
 
 export interface EnvGroupSpec {
@@ -94,6 +114,7 @@ export interface EnvGroupSpec {
 	/** The services whose render.yaml entry links the group with `fromGroup`. */
 	services: readonly Service[];
 	keys: readonly string[];
+	optionalKeys?: readonly string[];
 }
 
 /**
@@ -102,13 +123,19 @@ export interface EnvGroupSpec {
  * The gateway links no group that holds GitHub App credentials or a model key.
  */
 export const ENV_GROUPS: readonly EnvGroupSpec[] = [
-	{ name: "software-factory-shared", services: ["gateway", "workflows"], keys: ["RENDER_API_KEY"] },
-	{ name: "software-factory-gateway", services: ["gateway"], keys: ["GITHUB_WEBHOOK_SECRET"] },
+	{ name: "software-factory-shared", services: ["gateway", "workflows", "intake"], keys: ["RENDER_API_KEY"] },
+	{
+		name: "software-factory-gateway",
+		services: ["gateway"],
+		keys: ["GITHUB_WEBHOOK_SECRET", ...(config.connectors ? ["NR_LEDGER_URL", "NR_FACTORY_OPERATOR_TOKEN"] : [])],
+	},
 	{
 		name: "software-factory-workflows",
 		services: ["workflows"],
 		keys: ["RENDER_WORKSPACE_ID", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", ...HARNESS_KEY_ENV, ...CONNECTOR_ENV],
+		optionalKeys: config.connectors ? ["NR_PROD_WORKER_LOGS_TOKEN"] : [],
 	},
+	...(config.connectors ? [{ name: "software-factory-intake", services: ["intake" as const], keys: INTAKE_ENV }] : []),
 ];
 
 /** The group a service reads `key` from, if any. */
@@ -121,6 +148,7 @@ export const SECRET_ENV: readonly string[] = [
 	"GITHUB_WEBHOOK_SECRET",
 	"RENDER_API_KEY",
 	"GITHUB_APP_PRIVATE_KEY",
+	"NR_PROD_WORKER_LOGS_TOKEN",
 	...CONNECTOR_ENV.filter((key) => key !== "NR_LEDGER_URL"),
 ];
 

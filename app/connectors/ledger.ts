@@ -53,7 +53,11 @@ export type Claimed = z.infer<typeof Claimed>;
 export const RunEnvelope = Claimed.extend({ token: z.string().min(1).optional() });
 export const ClaimResult = z.union([
 	RunEnvelope.extend({ fresh: z.boolean() }),
-	z.object({ status: z.enum(["blocked", "failed", "completed"]), reason: z.string().optional() }),
+	z.object({
+		status: z.enum(["blocked", "failed", "completed"]),
+		reason: z.string().optional(),
+		state: z.object({ reason: z.string().nullable().optional() }).nullable().optional(),
+	}),
 ]);
 
 export class Ledger {

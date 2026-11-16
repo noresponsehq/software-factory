@@ -2,10 +2,10 @@
 
 This fork runs the NoResponse connector lifecycle with Claude Code on a Claude
 subscription. It does not need a model API key. Ordinary setup and production
-delivery have user authorization within the shared US$50 UTC-day cap. Preserve
-that cap during setup, before the runtime reservation exists. No paid lifecycle
-runs are permitted while independent supervisor review or billing admission is
-unresolved.
+delivery have user authorization under a shared US$50 UTC-day admission budget. Conservative reservations include
+compute ceilings and estimated traffic, baseline and storage costs. The user
+accepts possible provider billing overruns. No live factory execution is permitted
+until independent review accepts this integration.
 
 ## Credentials and prerequisites
 
@@ -40,12 +40,14 @@ new values to the main credential file. Run `npm run setup:preflight` before
 `npm run setup:render`. The latter creates or updates the existing environment
 groups, and `--workspace` writes its value to the same main credential file.
 
-The gateway receives only webhook and Render task-dispatch credentials.
+The gateway receives webhook, Render task-dispatch and ledger operator
+credentials for daily admission. It receives no GitHub or model credential.
 The workflows group receives GitHub, Claude subscription, ledger operator,
 Linear, Fly and production search credentials. Neither process may log them.
-Deploy the Blueprint only after baseline compute, retained snapshot storage and
-all provider traffic have enforceable allowances within the shared cap. An IP
-byte counter alone does not establish a whole-invoice upper bound.
+The setup command admits the daily baseline, retained storage and dispatch
+estimates through D1 before deployment. Gateway and intake repeat this idempotent
+admission each UTC day. An exhausted allowance refuses new factory dispatch;
+existing provider services can still bill. This is not an invoice guarantee.
 
 Run `npm run setup:github -- --gateway-url https://<gateway>.onrender.com` to
 set the webhook and configured connector label. Verify webhook delivery to that
@@ -57,18 +59,21 @@ Presence of the subscription token is not proof of a successful Claude run.
 ## Workstation image
 
 `sandbox/install-connector-tools.sh` installs pinned Claude Code, Go, Python,
-uv, Node, git, Chromium and APK inspection tools. Image builds need a separate
-recorded compute and storage reservation before creation. Runtime connector
+uv, Node, git, Chromium and APK inspection tools. Run `npm run setup:snapshot -- --repo noresponsehq/noresponse` after setup and review.
+The command reserves builder compute and traffic before creation; the daily
+allowance includes retained snapshot storage. Runtime connector
 work refuses a missing snapshot instead of creating one outside its allowance.
 Do not run upstream refresh tasks outside this reservation. Do not resume a
 suspended sandbox without a new reservation. Use explicit 2c-4g, idle timeout
 zero, an absolute host deadline and verified termination.
 
-Every candidate process, install and check must use the reviewed network
-supervisor, including the Fly probe. The adapter refuses an unreviewed helper
-hash. Local Chromium remains disabled until its relevant traffic and tariff
-are proved bounded. Fly's prepared image must include Python 3 and the kernel
-features the same supervisor needs; a missing prerequisite is a failure.
+Every candidate process, install and check uses the trusted launcher, which
+starts with a fixed clean root environment and uses `setpriv` to drop groups,
+UID/GID and all capabilities with no-new-privs. Candidate variables are applied
+only after the drop. Extra descriptors are closed. The Fly probe uses the same
+launcher. Render builders/restores use `allow-all`, and local Chromium can reach
+any domain. No custom kernel supervisor is used. Fly's prepared image must supply
+`setpriv`, `timeout` and `unshare`; a missing prerequisite fails closed.
 
 ## Intake and lifecycle smoke
 
@@ -77,7 +82,9 @@ health events and expired unfinished runs. Assign an actual connector outcome
 with `<!-- connector:github -->` or the selected connector ID. GitHub uses the
 configured `factory:connector` label. Include the linked `NOR-...` issue.
 Intake creates a deterministic Linear issue when no outcome already exists.
-Schedule intake only after its baseline compute is budgeted.
+The Blueprint schedules `factory-intake` every five minutes UTC with a
+180-second command deadline. Intake admits the daily dispatch estimate before
+starting tasks; it uses the dedicated intake environment group.
 
 The ledger owns `FACTORY_DAILY_USD` (default 50) and `FACTORY_CONCURRENCY`
 (default 4, range 1..64). The factory has no second concurrency limit. The host
@@ -97,3 +104,13 @@ Report setup as partial until both doctors and this smoke pass. Record source,
 selection, provider resources, conservative charges, outcomes and termination.
 Do not describe fake-service unit tests as live proof. Use `npm run check` for
 local lint, types and boundary regressions before requesting independent review.
+
+Factory Fly probes use `FACTORY_FLY_API_TOKEN`, scoped to `nr-probe`. The host
+passes it to the Fly child process as `FLY_API_TOKEN`; it never overwrites the
+main checkout's generic Fly credentials. Production `version,search` smoke
+receives only its search key and needs no Fly credential.
+
+When available, `NR_PROD_WORKER_LOGS_TOKEN` supplies production worker log
+attribution. Setup copies this optional secret to the workflows group without
+requiring it. Missing attribution leaves actual search gaps visible and cannot
+be replaced by the probe token or generic CLI authentication.

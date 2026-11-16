@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Render } from "@renderinc/sdk";
-import { requireEnv } from "../config/index.js";
+import { config, requireEnv } from "../config/index.js";
+import { accountDaily } from "../connectors/accounting.js";
 import { createGateway } from "../gateway/index.js";
 
 const port = Number(process.env.PORT ?? 3000);
@@ -9,9 +10,12 @@ const workflowSlug = requireEnv("RENDER_WORKFLOW_SLUG");
 // Reads RENDER_API_KEY and throws without it.
 const render = new Render();
 
+if (config.connectors) await accountDaily();
+
 const app = createGateway({
 	webhookSecret,
 	async startTask(task, input, idempotencyKey) {
+		if (config.connectors) await accountDaily();
 		const run = await render.workflows.startTask(`${workflowSlug}/${task}`, [input], { idempotencyKey });
 		return { id: run.taskRunId };
 	},

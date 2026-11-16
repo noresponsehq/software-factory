@@ -29,7 +29,9 @@ export async function runClaude(
 	try {
 		await sandbox.upload(`${dir}/launch.mjs`, await readFile(new URL("../../sandbox/claude-launch.mjs", import.meta.url)));
 		await sandbox.upload(`${dir}/input.json`, JSON.stringify({ ...input, schema: z.toJSONSchema(AgentResult) }));
-		const result = await sandbox.exec(`node ${shq(`${dir}/launch.mjs`)} ${shq(dir)}`, { timeoutMs: (input.seconds + 30) * 1000 });
+		const result = await sandbox.exec(`/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin node ${shq(`${dir}/launch.mjs`)} ${shq(dir)}`, {
+			timeoutMs: (input.seconds + 30) * 1000,
+		});
 		if (result.exitCode !== 0) throw new Error("Claude subscription run failed; no API fallback attempted");
 		const output = z.object({ is_error: z.literal(false), structured_output: AgentResult }).parse(JSON.parse(result.stdout));
 		return output.structured_output;

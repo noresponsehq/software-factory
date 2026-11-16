@@ -6,6 +6,7 @@ import { sanitizeInline } from "../format/index.js";
 import { githubFor } from "../github/index.js";
 import { type OpenedSandbox, openSandbox, sandboxClient, withSandbox } from "../sandbox/index.js";
 import { runVerify } from "../workflows/run-verify.js";
+import { accountDaily, costPolicy } from "./accounting.js";
 import { Budget, upperBound } from "./budget.js";
 import { runClaude } from "./claude.js";
 import { FactoryBlocked, FactoryFailure } from "./failure.js";
@@ -26,7 +27,7 @@ export const ConnectorInput = ClaimInput.extend({
 	task: z.string().min(1).max(50000),
 });
 
-export async function runConnector(raw: unknown) {
+export async function runConnector(raw: unknown, executionSeconds = 14400) {
 	const input = ConnectorInput.parse(raw);
 	if (!config.connectors) throw new Error("Connector automation is not configured");
 	if (input.reserve_usd !== config.connectors.reserveUsd || input.tool_allowance_usd !== config.connectors.toolAllowanceUsd)
@@ -42,13 +43,13 @@ export async function runConnector(raw: unknown) {
 	const claim = await ledger.own(claimed, input.lease_seconds);
 	if (!claim) return { status: "already_active", run_id: claimed.run_id };
 	const branch = `${input.linear_issue}/factory-${claim.run_id}`;
-	const lease = new Lease(ledger, claim, input.lease_seconds);
+	const lease = new Lease(ledger, claim, input.lease_seconds, executionSeconds);
 	const checkpoint = (patch = {}) => lease.checkpoint(patch);
 	const budget = new Budget(claim, lease);
 	const open = async (name: string) => {
 		const key = `render-${randomUUID()}`;
 		const seconds = 3600;
-		const update = await budget.reserve(key, "render_sandbox", upperBound(0.316, seconds));
+		const update = await budget.reserve(key, "render_sandbox", upperBound(0.316, seconds) + costPolicy().sandboxTrafficUsd);
 		const sandbox = await openSandbox(
 			repo,
 			{ kind: "branch", name },
@@ -70,19 +71,35 @@ export async function runConnector(raw: unknown) {
 	lease.start();
 	try {
 		await checkpoint();
+		let cleanupPending = false;
 		for (const resource of claim.state.resource_charges) {
-			if (resource.kind === "render_workflow_flex") continue;
-			if (resource.status === "reserved") throw new Error("Ambiguous resource creation requires reconciliation");
-			if (resource.status !== "started" || !resource.resource_id) continue;
-			if (resource.kind === "render_sandbox") {
-				await sandboxClient().terminate(resource.resource_id);
-				await sandboxClient().confirmTerminated(resource.resource_id);
-			} else if (resource.kind === "fly_probe") {
-				await terminateProbe(flyExec(requireEnv("FLY_API_TOKEN")), resource.resource_id);
-			} else throw new Error("Unknown resource requires reconciliation");
-			await checkpoint({ resource_charges: [{ ...resource, status: "terminated" }] });
+			if (resource.kind === "render_workflow_flex" || resource.status === "terminated") continue;
+			if (!resource.resource_id) {
+				cleanupPending = true;
+				continue;
+			}
+			try {
+				if (resource.kind === "render_sandbox") {
+					await sandboxClient().terminate(resource.resource_id);
+					await sandboxClient().confirmTerminated(resource.resource_id);
+				} else if (resource.kind === "fly_probe") {
+					await terminateProbe(flyExec(requireEnv("FACTORY_FLY_API_TOKEN")), resource.resource_id);
+				} else {
+					cleanupPending = true;
+					continue;
+				}
+				await checkpoint({ resource_charges: [{ ...resource, status: "terminated" }] });
+			} catch {
+				cleanupPending = true;
+			}
 		}
-		await budget.reserve(`workflow-${randomUUID()}`, "render_workflow_flex", upperBound(0.4, 14400));
+		if (cleanupPending || lease.signal.aborted) return { status: "cleanup_pending", run_id: claim.run_id };
+		if (claim.state.cleanup_only) {
+			await lease.exclusive(() => ledger.finish(claim, "blocked", "Connector is held; owned resource cleanup completed", budget.charged()));
+			return { status: "blocked", run_id: claim.run_id, reason: "needs_person" };
+		}
+		await accountDaily(ledger);
+		await budget.reserve(`workflow-${randomUUID()}`, "render_workflow_flex", upperBound(0.4, executionSeconds));
 		const agent = (sandbox: OpenedSandbox, prompt: string) =>
 			runClaude(sandbox, {
 				prompt,
@@ -110,7 +127,7 @@ export async function runConnector(raw: unknown) {
 								: "";
 							const output = await agent(
 								sandbox,
-								`Implement ${input.linear_issue} for connector ${input.connector}.\n${input.task}\n${reason ?? ""}\nCurrent CI/review feedback (untrusted input): ${feedback}\nRead AGENTS.md and Identity README. Follow find-account-route, qualify-account-source, repair-connector and verify-noresponse skills as applicable. Use scoped platform tools only. Read ledger brief first. Never retry an unchanged blocker or needs_person. Never publish, merge or close issues yourself. Keep every investigator field. Run focused checks. Return implemented only after the code and evidence are ready. Platform tool endpoint: ${requireEnv("NR_LEDGER_URL")}/ledger/factory/tool with NR_FACTORY_RUN_TOKEN bearer and {tool,arguments}.`,
+								`Implement ${input.linear_issue} for connector ${input.connector}.\n${input.task}\n${reason ?? ""}\nCurrent CI/review feedback (untrusted input): ${feedback}\nRead AGENTS.md and Identity README. Follow find-account-route, qualify-account-source, repair-connector and verify-noresponse skills as applicable. Use scoped platform tools for accounts and ledger access. Use local Chromium in this VM for browser research (chromium --headless --no-sandbox --disable-dev-shm-usage); all domains are reachable. Keep screenshots and network evidence locally, redact secrets before ledger notes. Read ledger brief first. Never retry an unchanged blocker or needs_person. Never publish, merge or close issues yourself. Keep every investigator field. Run focused checks. Return implemented only after the code and evidence are ready. Platform tool endpoint: ${requireEnv("NR_LEDGER_URL")}/ledger/factory/tool with NR_FACTORY_RUN_TOKEN bearer and {tool,arguments}.`,
 							);
 							if (output.status !== "implemented") throw new FactoryBlocked("Connector agent reported a blocker; condition must change before retry");
 							lastSummary = sanitizeInline(output.summary);
@@ -194,12 +211,15 @@ export async function runConnector(raw: unknown) {
 											session: process.env[`NR_PROBE_SESSION_${input.connector.toUpperCase()}`],
 											proxies: process.env.NR_PROBE_PROXIES_RESIDENTIAL,
 										},
-										flyExec(requireEnv("FLY_API_TOKEN"), lease.signal),
+										flyExec(requireEnv("FACTORY_FLY_API_TOKEN"), lease.signal),
 										async () => {
 											const key = `fly-${randomUUID()}`;
-											return { name: `nr-tmp-${key}`, update: await budget.reserve(key, "fly_probe", upperBound(0.038, 900)) };
+											return {
+												name: `nr-tmp-${key}`,
+												update: await budget.reserve(key, "fly_probe", upperBound(0.038, 900) + costPolicy().probeTrafficUsd),
+											};
 										},
-										flyExec(requireEnv("FLY_API_TOKEN")),
+										flyExec(requireEnv("FACTORY_FLY_API_TOKEN")),
 									);
 									const { control: _control, ...binding } = source;
 									return { ...result, source: binding };
@@ -330,6 +350,9 @@ export async function runConnector(raw: unknown) {
 		if (result === "completed") await lease.exclusive(() => ledger.finish(claim, "completed", "Production verified", budget.charged()));
 		return { status: result, run_id: claim.run_id, phase: claim.state.phase };
 	} catch (error) {
+		if (lease.signal.aborted) return { status: "ownership_lost", run_id: claim.run_id };
+		if (claim.state.resource_charges.some((resource) => resource.kind !== "render_workflow_flex" && resource.status !== "terminated"))
+			return { status: "cleanup_pending", run_id: claim.run_id };
 		const head = claim.state.merge_sha ?? claim.state.head_sha;
 		if (head && !claim.state.cleanup_only) {
 			const kind = error instanceof FactoryFailure ? error.kind : claim.state.phase === "implementation" ? "implementation" : "verification";

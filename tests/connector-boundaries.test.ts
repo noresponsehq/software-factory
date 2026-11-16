@@ -34,7 +34,7 @@ describe("factory trust boundaries", () => {
 			close: vi.fn(),
 			exec: vi.fn(async (command: string) => ({
 				exitCode: 0,
-				stdout: command.startsWith("node ")
+				stdout: command.includes(" node ")
 					? JSON.stringify({ is_error: false, structured_output: { status: "implemented", summary: "done", evidence: [] } })
 					: "",
 				stderr: "",

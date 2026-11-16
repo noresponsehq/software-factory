@@ -12,6 +12,7 @@
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { config } from "../app/config/index.js";
+import { accountDaily } from "../app/connectors/accounting.js";
 import { credentialPath, MAIN_CREDENTIAL_FILE, writeEnvFile } from "./lib/env-file.js";
 import { errorMessage, Reporter } from "./lib/output.js";
 import { setupRenderWithPreflight } from "./lib/preflight.js";
@@ -25,6 +26,7 @@ try {
 	const env = workspace ? { ...process.env, RENDER_WORKSPACE_ID: workspace } : process.env;
 	const requiredNodeMajor = Number.parseInt(await readFile(new URL("../.node-version", import.meta.url), "utf8"), 10);
 	process.exitCode = await setupRenderWithPreflight({ env, repos: config.repos, nodeVersion: process.versions.node, requiredNodeMajor }, out);
+	if (config.connectors && process.exitCode === 0) await accountDaily();
 	if (workspace && process.exitCode === 0) {
 		await writeEnvFile(credentialFile, { RENDER_WORKSPACE_ID: workspace });
 		out.line(`Saved RENDER_WORKSPACE_ID=${workspace} to ${credentialFile}`);

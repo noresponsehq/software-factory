@@ -231,7 +231,7 @@ describe("buildSnapshot", () => {
 		expect(clone).toContain("'credential.helper=!bash /opt/factory/app/build/git-credential-staged.sh /tmp/factory-stage/creds'");
 
 		// The install runs as the runner user, through as-runner.sh.
-		expect(fake.commands()).toContain("bash /opt/factory/app/as-runner.sh 'bash' '-c' 'npm ci'");
+		expect(fake.commands()).toContain("/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 3600 /bin/bash /opt/factory/app/as-runner.sh 'bash' '-c' 'npm ci'");
 
 		expect(fake.inputs("snapshot.create")).toEqual([{ sandboxId: "sbx-1", kind: "filesystem", name: NAME }]);
 		expect(fake.terminated()).toEqual(["sbx-1"]);
@@ -327,7 +327,7 @@ describe("openSandbox", () => {
 		const fetchIdx = fake.execIndex("'fetch'");
 		const fetchCmd = commands.find((c) => c.includes("'fetch'"));
 		expect(fetchCmd).toBe(
-			"bash /opt/factory/app/as-runner.sh 'git' '-c' 'credential.helper=' " +
+			"/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 3600 /bin/bash /opt/factory/app/as-runner.sh 'git' '-c' 'credential.helper=' " +
 				`'-c' 'credential.helper=!bash /opt/factory/app/build/git-credential-staged.sh ${dir}' ` +
 				"'fetch' '--quiet' '--no-tags' 'origin' 'refs/heads/main'",
 		);
@@ -374,7 +374,7 @@ describe("openSandbox", () => {
 	it("reinstalls as the runner user only when the lockfile hash changed", async () => {
 		fake.lockfileHash = "b".repeat(64);
 		await openSandbox(repo(), { kind: "branch", name: "main" }, deps());
-		expect(fake.commands()).toContain("bash /opt/factory/app/as-runner.sh 'bash' '-c' 'npm ci'");
+		expect(fake.commands()).toContain("/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 3600 /bin/bash /opt/factory/app/as-runner.sh 'bash' '-c' 'npm ci'");
 		expect(fake.execIndex("'bash' '-c' 'npm ci'")).toBeGreaterThan(fake.execIndex("'checkout'"));
 	});
 

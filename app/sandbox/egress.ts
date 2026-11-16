@@ -20,11 +20,7 @@ export function taskEgress(repo: RepoContext): SandboxNetworkPolicy {
 
 /** The snapshot builder's policy: it never calls a model, but it installs base-image tools. */
 export function builderEgress(repo: RepoContext): SandboxNetworkPolicy {
-	return egressPolicy(repo, [
-		GITHUB_HOST,
-		DEBIAN_MIRROR,
-		...(config.connectors ? ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "go.dev", "dl.google.com"] : []),
-	]);
+	return egressPolicy(repo, [GITHUB_HOST, DEBIAN_MIRROR]);
 }
 
 /** Appended to install failures: a blocked host fails as a reset connection, which reads like a network flake. */
@@ -37,6 +33,7 @@ export function egressHint(repo: RepoContext, policy: SandboxNetworkPolicy): str
 }
 
 function egressPolicy(repo: RepoContext, base: readonly string[]): SandboxNetworkPolicy {
+	if (config.connectors) return { type: "allow-all" };
 	const extra = repo.config.egress ?? [];
 	if (extra === "allow-all") return { type: "allow-all" };
 	// The API rejects a domain listed twice.

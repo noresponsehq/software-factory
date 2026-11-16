@@ -57,7 +57,8 @@ class RenderApi {
 
 export async function setupRender(opts: SetupRenderOptions, out: Reporter): Promise<number> {
 	const { env } = opts;
-	for (const group of ENV_GROUPS) out.addSecrets(...group.keys.filter((key) => !NOT_SECRET.has(key)).map((key) => env[key]));
+	for (const group of ENV_GROUPS)
+		out.addSecrets(...[...group.keys, ...(group.optionalKeys ?? [])].filter((key) => !NOT_SECRET.has(key)).map((key) => env[key]));
 
 	out.heading("Values from .env");
 	let missing = false;
@@ -115,21 +116,22 @@ async function syncGroup(api: RenderApi, spec: EnvGroupSpec, workspace: string, 
 		return;
 	}
 
-	const values = Object.fromEntries(spec.keys.map((key) => [key, env[key]?.trim() ?? ""]));
+	const keys = [...spec.keys, ...(spec.optionalKeys ?? []).filter((key) => env[key]?.trim())];
+	const values = Object.fromEntries(keys.map((key) => [key, env[key]?.trim() ?? ""]));
 	const existing = matches[0];
 	if (!existing) {
 		await api.expect("POST", "/env-groups", {
 			name: spec.name,
 			ownerId: workspace,
-			envVars: spec.keys.map((key) => ({ key, value: values[key] })),
+			envVars: keys.map((key) => ({ key, value: values[key] })),
 		});
-		out.pass(`created with ${spec.keys.join(", ")}`);
+		out.pass(`created with ${keys.join(", ")}`);
 		return;
 	}
 
 	const current = await api.expect<EnvGroup>("GET", `/env-groups/${encodeURIComponent(existing.id)}`);
 	const stored = new Map((current.envVars ?? []).map((v) => [v.key, v.value]));
-	for (const key of spec.keys) {
+	for (const key of keys) {
 		if (stored.get(key) === values[key]) {
 			out.pass(`${key} unchanged`);
 			continue;

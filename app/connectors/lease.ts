@@ -4,16 +4,18 @@ import type { Claimed, Ledger, State } from "./ledger.js";
 export class Lease {
 	private queue: Promise<unknown> = Promise.resolve();
 	private failed = false;
+	private loss: Promise<void> | undefined;
 	private readonly abort = new AbortController();
 	private deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-	readonly deadline = Date.now() + 14400000;
+	readonly deadline: number;
 	get signal() {
 		return this.abort.signal;
 	}
 	private async lose() {
 		this.failed = true;
 		this.abort.abort();
-		await Promise.allSettled([...this.sandboxes].map((s) => s.close()));
+		this.loss ??= Promise.allSettled([...this.sandboxes].map((s) => Promise.resolve().then(() => s.close()))).then(() => {});
+		await this.loss;
 	}
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private readonly sandboxes = new Set<Sandbox>();
@@ -21,8 +23,12 @@ export class Lease {
 		readonly ledger: Ledger,
 		readonly claim: Claimed,
 		readonly seconds: number,
-	) {}
+		executionSeconds = 14400,
+	) {
+		this.deadline = Date.now() + executionSeconds * 1000;
+	}
 	async exclusive<T>(action: () => Promise<T>): Promise<T> {
+		if (this.failed) throw new Error("Factory lease lost");
 		const next = this.queue.then(async () => {
 			if (this.failed || Date.now() >= this.deadline) throw new Error("Factory lease lost");
 			return action();
@@ -31,7 +37,14 @@ export class Lease {
 		return next;
 	}
 	async checkpoint(patch: Partial<Omit<State, "version">> = {}) {
-		return this.exclusive(() => this.ledger.heartbeat(this.claim, this.seconds, patch));
+		return this.exclusive(async () => {
+			try {
+				await this.ledger.heartbeat(this.claim, this.seconds, patch);
+			} catch (error) {
+				await this.lose();
+				throw error;
+			}
+		});
 	}
 	track<T extends Sandbox>(sandbox: T): T {
 		const execute = sandbox.exec.bind(sandbox);
@@ -51,7 +64,7 @@ export class Lease {
 		);
 		this.timer = setInterval(
 			() => {
-				void this.checkpoint().catch(() => this.lose());
+				void this.checkpoint().catch(() => {});
 			},
 			Math.max(1000, Math.min(30000, (this.seconds * 1000) / 3)),
 		);
@@ -60,5 +73,6 @@ export class Lease {
 		if (this.timer) clearInterval(this.timer);
 		if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
 		await this.queue;
+		await this.loss;
 	}
 }

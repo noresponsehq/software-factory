@@ -20,7 +20,6 @@ import {
 	type SnapshotDeps,
 	snapshotName,
 } from "./snapshot.js";
-import { initializeSupervision } from "./supervision.js";
 import { APP_DIR, type OpenedSandbox, REPO_DIR, RUN_AS, type Sandbox, type SandboxRef, SCRATCH_DIR, type SnapshotManifest } from "./types.js";
 import { verifySandbox } from "./verify.js";
 
@@ -40,7 +39,8 @@ function connectSandbox(id: string, client?: SandboxClient): Sandbox {
 		id,
 		async exec(command, opts = {}) {
 			const c = get();
-			const wrapped = opts.asRunner ? asRunner("bash", "-c", command) : command;
+			const seconds = Math.max(1, Math.min(3600, Math.floor((opts.timeoutMs ?? c.t.execTimeoutMs) / 1000)));
+			const wrapped = opts.asRunner ? asRunner("/usr/bin/timeout", "--kill-after=5s", String(seconds), "bash", "-c", command) : command;
 			return c.exec(id, wrapped, { timeoutMs: opts.timeoutMs ?? c.t.execTimeoutMs, signal: opts.signal });
 		},
 		async upload(path, data) {
@@ -77,7 +77,6 @@ export async function openSandbox(repo: RepoContext, ref: SandboxRef, deps: Open
 	try {
 		await client.waitRunning(id);
 		await ensureRunnerPayload(client, id);
-		if (config.connectors) await initializeSupervision(client, id);
 		const info = await verifySandbox(client, id);
 		// verify.sh can only probe /proc as root; a sandbox where it couldn't check never gets a model key.
 		if (!info.runnerNonDumpable) throw new Error(`could not confirm the runner is non-dumpable in ${id}`);

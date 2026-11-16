@@ -8,7 +8,7 @@ import { Linear } from "./linear.js";
 
 const marker = (text: string) => /<!--\s*connector:([a-z0-9_]+)\s*-->/.exec(text)?.[1];
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
-export async function intake(start: (input: object, key: string) => Promise<unknown>) {
+export async function intake(start: (input: object, key: string, task?: "connector" | "connector-continuation") => Promise<unknown>) {
 	if (!config.connectors) throw new Error("Connector mode is not configured");
 	const repoName = Object.keys(config.repos)[0];
 	if (!repoName) throw new Error("No connector repository configured");
@@ -110,6 +110,7 @@ export async function intake(start: (input: object, key: string) => Promise<unkn
 		})
 		.parse(await ledger.call("runs?unfinished=true"));
 	for (const run of pending.runs) {
+		if (run.state.connector.startsWith("factory_")) continue;
 		if (new Date(run.expires_at).getTime() > Date.now()) continue;
 		const issue = issues.find((i) => i.identifier === run.state.linear_issue);
 		await start(
@@ -124,6 +125,7 @@ export async function intake(start: (input: object, key: string) => Promise<unkn
 				task: issue ? `${issue.title}\n${issue.description ?? ""}` : `Continue ${run.state.linear_issue}; read existing notes and PR state`,
 			},
 			`continue:${run.run_id}:${run.state.version}`,
+			["ci", "release", "production_verified"].includes(run.state.phase) ? "connector-continuation" : "connector",
 		);
 	}
 	return { next: after };

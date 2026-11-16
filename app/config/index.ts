@@ -69,6 +69,7 @@ export function requireEnv(name: string): string {
 /** Task names, shared by the gateway (which starts them) and the Workflows service (which registers them). */
 export const TASKS = {
 	connector: "connector",
+	connectorContinuation: "connector-continuation",
 	triage: "triage",
 	specToPr: "spec-to-pr",
 	prReview: "pr-review",

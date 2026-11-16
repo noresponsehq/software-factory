@@ -1,12 +1,11 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type { Sandbox } from "../sandbox/index.js";
-import { reviewedSupervisor } from "../sandbox/supervision.js";
 import { FactoryFailure } from "./failure.js";
 import { assertProbe, Control } from "./probe-assertions.js";
 
@@ -77,9 +76,12 @@ export async function probe(
 	let charged: Awaited<ReturnType<typeof charge>> | undefined;
 	try {
 		await writeFile(join(dir, "probe"), binary, { mode: 0o600 });
-		await writeFile(join(dir, "network-supervisor.py"), await reviewedSupervisor(), {
-			mode: 0o600,
-		});
+		await writeFile(join(dir, "as-runner.sh"), await readFile(new URL("../../sandbox/as-runner.sh", import.meta.url)), { mode: 0o600 });
+		await writeFile(
+			join(dir, "env"),
+			"FACTORY_SCRATCH_DIR=/work/scratch\nFACTORY_REPO_DIR=/work\nFACTORY_APP_DIR=/root\nFACTORY_RUN_AS=nobody\nFACTORY_PATH=/usr/local/bin:/usr/bin:/bin\n",
+			{ mode: 0o600 },
+		);
 		const files: string[] = [];
 
 		for (const [key, value] of [
@@ -128,7 +130,7 @@ export async function probe(
 		if (!machine) throw new Error("Fly returned no machine id");
 		await charged.update("started", machine);
 		await host(["machine", "wait", machine, "--app", "nr-probe", "--state", "started", "--wait-timeout", "2m"]);
-		for (const name of ["probe", "network-supervisor.py"])
+		for (const name of ["probe", "as-runner.sh", "env"])
 			await host(["ssh", "sftp", "put", join(dir, name), `/root/${name}`, "--app", "nr-probe", "--machine", machine]);
 		await host([
 			"ssh",
@@ -138,22 +140,14 @@ export async function probe(
 			"--machine",
 			machine,
 			"-C",
-			"sh -c 'command -v python3 >/dev/null && mkdir -p /work /secrets && cp /root/probe /work/probe && chmod 755 /work/probe && chown -R 65534:65534 /work /secrets && chmod 700 /root && chmod 400 /root/network-supervisor.py && python3 -I /root/network-supervisor.py init --bytes 67108864 >/dev/null'",
+			"sh -c 'command -v setpriv >/dev/null && command -v timeout >/dev/null && command -v unshare >/dev/null && mkdir -p /work/scratch /secrets && cp /root/probe /work/probe && chmod 555 /work/probe && chown -R 65534:65534 /secrets && chmod 700 /root && chmod 400 /root/as-runner.sh /root/env'",
 		]);
 		const result = await assertProbe(input.control, async (value, network) => {
 			const request = {
-				argv: ["/work/probe", "lookup", input.connector],
-				cwd: "/work",
-				uid: 65534,
-				gid: 65534,
-				seconds: 35,
-				env: { PATH: "/usr/bin:/bin", HOME: "/work", NR_SIGNUP_BUILD_VERSION: input.head },
-				stdin: JSON.stringify({
-					by: input.control.known.By,
-					value,
-					session: input.session === undefined ? "" : "/secrets/session",
-					proxies: input.proxies === undefined ? "" : "/secrets/proxies",
-				}),
+				by: input.control.known.By,
+				value,
+				session: input.session === undefined ? "" : "/secrets/session",
+				proxies: input.proxies === undefined ? "" : "/secrets/proxies",
 			};
 			await writeFile(join(dir, "exec.json"), JSON.stringify(request), { mode: 0o600 });
 			await host(["ssh", "sftp", "put", join(dir, "exec.json"), "/root/exec.json", "--app", "nr-probe", "--machine", machine as string]);
@@ -166,10 +160,10 @@ export async function probe(
 				"--machine",
 				machine as string,
 				"-C",
-				`sh -c 'chmod 400 /root/exec.json && ${network ? "" : "unshare --net "}python3 -I /root/network-supervisor.py exec </root/exec.json; code=$?; printf "\\nNRPROBE_STATUS %s\\n" "$code"'`,
+				`sh -c 'chmod 400 /root/exec.json && /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 35 ${network ? "" : "/usr/bin/unshare --net "}/bin/bash /root/as-runner.sh /usr/bin/env NR_SIGNUP_BUILD_VERSION=${input.head} /work/probe lookup ${input.connector} </root/exec.json; code=$?; printf "\\nNRPROBE_STATUS %s\\n" "$code"'`,
 			]);
 			const match = /\nNRPROBE_STATUS (\d+)\s*$/.exec(output);
-			if (match?.[1] !== "0") throw new Error("Candidate RPC has no successful supervisor exit");
+			if (match?.[1] !== "0") throw new Error("Candidate RPC has no successful runner exit");
 			return { output: JSON.parse(output.slice(0, match.index)), elapsedMs: performance.now() - started };
 		});
 		return { head: input.head, region: "iad", binary_sha256: createHash("sha256").update(binary).digest("hex"), result };

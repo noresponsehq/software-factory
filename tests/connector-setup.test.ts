@@ -5,8 +5,10 @@ vi.mock("../factory.config.js", async () => {
 	return { default: { ...testConfig, connectors: { marker: "factory:connector", dailyUsd: 50, reserveUsd: 5, toolAllowanceUsd: 0.5 } } };
 });
 
+import { requireRepo } from "../app/config/index.js";
+import { builderEgress, taskEgress } from "../app/sandbox/egress.js";
 import { buildManifest, formPage } from "../scripts/lib/manifest.js";
-import { missingPermissions, SERVICE_ENV } from "../scripts/lib/requirements.js";
+import { LABELS, missingPermissions, SERVICE_ENV } from "../scripts/lib/requirements.js";
 
 describe("connector deployment permissions", () => {
 	it("requests and displays only the writes and reads the lifecycle needs", () => {
@@ -30,5 +32,13 @@ describe("connector deployment permissions", () => {
 		]);
 		expect(SERVICE_ENV.workflows).toContain("CLAUDE_CODE_OAUTH_TOKEN");
 		expect(SERVICE_ENV.workflows).not.toContain("ANTHROPIC_API_KEY");
+		expect(SERVICE_ENV.workflows).toContain("FACTORY_FLY_API_TOKEN");
+		expect(SERVICE_ENV.workflows).not.toContain("FLY_API_TOKEN");
+		expect(LABELS.map((label) => label.name)).toEqual(["factory:connector", "factory:working"]);
+	});
+	it("uses unrestricted networking for both connector builders and restored workloads", () => {
+		const repo = requireRepo("acme/widget", 1);
+		expect(builderEgress(repo)).toEqual({ type: "allow-all" });
+		expect(taskEgress(repo)).toEqual({ type: "allow-all" });
 	});
 });

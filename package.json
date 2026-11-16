@@ -25,7 +25,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run lint && npm run typecheck && npm test",
-    "intake": "node --env-file-if-exists=/Users/harryjohnston/projects/noresponse/.env --import tsx scripts/connector-intake.ts"
+    "intake": "node --env-file-if-exists=/Users/harryjohnston/projects/noresponse/.env --import tsx scripts/connector-intake.ts",
+    "setup:snapshot": "node --env-file-if-exists=/Users/harryjohnston/projects/noresponse/.env --import tsx scripts/connector-snapshot.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.83.0",

@@ -6,8 +6,8 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { type RepoContext, requireEnv } from "../config/index.js";
 import { gitData, githubToken } from "../github/index.js";
-
 import { FactoryFailure } from "./failure.js";
+import { productionFailure } from "./production-evidence.js";
 
 const exec = promisify(execFile);
 export async function productionSearch(repo: RepoContext, merge: string, signal?: AbortSignal) {
@@ -15,11 +15,14 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 	const trusted = await gitData(repo).getRef(repo.config.baseBranch);
 	if (!trusted) throw new Error("Cannot resolve trusted operator source");
 	const dir = await mkdtemp(join(tmpdir(), "nr-tmp-production-"));
+	let stage = "initialize";
+	let smokeExit: number | undefined;
 	try {
 		signal?.throwIfAborted();
 		const cleanEnv = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
 		await exec("git", ["init", dir], { env: cleanEnv, signal });
 		await exec("git", ["-C", dir, "remote", "add", "origin", `https://github.com/${repo.fullName}.git`], { env: cleanEnv, signal });
+		stage = "fetch_operator";
 		const readToken = await githubToken({ installationId: repo.installationId, repo: repo.name, permissions: { contents: "read" } });
 		await exec("git", ["-C", dir, "fetch", "--depth=1", "origin", trusted], {
 			env: {
@@ -31,9 +34,11 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 			timeout: 120000,
 			signal,
 		});
+		stage = "checkout_operator";
 		await exec("git", ["-C", dir, "checkout", "--detach", trusted], { env: cleanEnv, signal });
 		const actual = await exec("git", ["-C", dir, "rev-parse", "HEAD"], { env: cleanEnv, signal });
 		if (actual.stdout.trim() !== trusted) throw new Error("Trusted operator revision mismatch");
+		stage = "version_before";
 		const before = z
 			.object({ build_version: z.string() })
 			.parse(await (await fetch("https://api.noresponse.org/version", { signal: AbortSignal.timeout(30000) })).json());
@@ -45,7 +50,9 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 		await writeFile(empty, "", { mode: 0o600 });
 		const image = `registry.fly.io/nr-ii-prod-api:${merge}`;
 		const identity = join(dir, "apps/identity");
+		stage = "install_regression";
 		await exec("npm", ["ci", "--ignore-scripts"], { cwd: join(identity, "integrations/regression"), env: cleanEnv, timeout: 120000, signal });
+		stage = "production_smoke";
 		const result = await exec("bash", ["deploy/fly/prod-smoke.sh", image, previous, "--only", "version,search"], {
 			cwd: identity,
 			env: {
@@ -54,16 +61,19 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 				NR_PROD_SMOKE_ENV_FILES: empty,
 				NR_PROD_SMOKE_DIR: join(dir, "proof"),
 				NR_PROD_SEARCH_API_KEY: requireEnv("NR_PROD_SEARCH_API_KEY"),
-				FLY_API_TOKEN: requireEnv("FLY_API_TOKEN"),
+				NR_PROD_WORKER_LOGS_TOKEN: process.env.NR_PROD_WORKER_LOGS_TOKEN ?? "",
 			},
 			timeout: 900000,
 			signal,
 			maxBuffer: 8 * 1024 * 1024,
 		});
+		smokeExit = 0;
+		stage = "version_after";
 		const after = z
 			.object({ build_version: z.string() })
 			.parse(await (await fetch("https://api.noresponse.org/version", { signal: AbortSignal.timeout(30000) })).json());
 		if (after.build_version !== merge) throw new Error("Production changed during verification");
+		stage = "read_summary";
 		const summary = z
 			.object({
 				status: z.literal("pass"),
@@ -73,6 +83,7 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 				providers: z.object({ search: z.object({ steps: z.array(z.object({ ok: z.literal(true) })).min(1) }) }),
 			})
 			.parse(JSON.parse(await readFile(join(dir, "proof/search-summary.json"), "utf8")));
+		stage = "validate_result";
 		z.object({ ok: z.literal(true), commit: z.literal(merge) }).parse(JSON.parse(result.stdout));
 		return {
 			sha: merge,
@@ -84,16 +95,16 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 			failed: 0,
 			skipped: summary.gaps.length,
 		};
-	} catch {
-		throw new FactoryFailure("production", {
-			status: "fail",
-			sha: merge,
-			operator_sha: trusted,
-			selection: "version,search --size 5",
-			checks: 0,
-			failed: 1,
-			skipped: 0,
-		});
+	} catch (error) {
+		let summary: unknown;
+		try {
+			summary = JSON.parse(await readFile(join(dir, "proof/search-summary.json"), "utf8"));
+		} catch {
+			summary = null;
+		}
+		const payload = productionFailure(stage, error, summary);
+		if (smokeExit !== undefined) payload.exit_code = smokeExit;
+		throw new FactoryFailure("production", { ...payload, sha: merge, operator_sha: trusted, selection: "version,search --size 5" });
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

@@ -1,7 +1,8 @@
 import { task } from "@renderinc/sdk/workflows";
-import { requireRepo, TASKS } from "../config/index.js";
-import { RefreshSnapshotInput } from "../schemas/index.js";
+import { config, requireRepo, TASKS } from "../config/index.js";
+import { setupSnapshot } from "../connectors/setup.js";
 import { buildSnapshot, sandboxClient } from "../sandbox/index.js";
+import { RefreshSnapshotInput } from "../schemas/index.js";
 
 /** Rebuilds a repository's named snapshot at a pushed base-branch commit. Started by the gateway on push. */
 export const refreshSnapshot = task(
@@ -13,6 +14,7 @@ export const refreshSnapshot = task(
 	async (_ctx, raw: unknown): Promise<{ snapshotId: string; repo: string; sha: string }> => {
 		const input = RefreshSnapshotInput.parse(raw);
 		const repo = requireRepo(input.repo, input.installationId);
+		if (config.connectors) return setupSnapshot(repo, input.sha);
 		const built = await buildSnapshot(sandboxClient(), repo, input.sha);
 		return { snapshotId: built.id, repo: repo.fullName, sha: input.sha };
 	},

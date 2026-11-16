@@ -11,14 +11,14 @@ Local development requires Render CLI 2.29 or later. It still uses real
 Render Sandboxes, a real GitHub App, and a real model. Use a test repository
 and, when possible, a separate App.
 
-Install dependencies and create a local environment file:
+Install dependencies. All local commands load the main checkout credential file
+`/Users/harryjohnston/projects/noresponse/.env`; existing environment values win:
 
 ```bash
 npm ci
-cp .env.example .env
 ```
 
-Fill `.env` without committing it. Start each process in its own terminal:
+Do not create a credential file in this fork. Start each process in its own terminal:
 
 ```bash
 # Terminal 1

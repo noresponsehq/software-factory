@@ -21,7 +21,7 @@ GitHub marker / assigned Linear / D1 health
 The host owns repositories, branches, GitHub writes, Linear transitions and
 provider credentials. Guests receive a separate Claude subscription token and
 connector-scoped ledger run token. Both credentials are readable by guest code;
-they are not a credential-free execution environment. The supervisor clears
+they are not a credential-free execution environment. The trusted launcher clears
 ambient environment and drops UID, groups and capabilities. Authentication must
 report `claude.ai` or `oauth_token`; a refused or expired subscription fails.
 
@@ -43,15 +43,15 @@ Assigned Linear issues use the same connector marker. The host intake command
 also reads ledger health changes and creates a deterministic Linear outcome when
 none exists. Existing unfinished runs are read from D1 for CI/release continuation.
 The intake command is `node --import tsx scripts/connector-intake.ts`; run it with
-the configured host environment. Deploy scheduling only with baseline compute
-included in the shared budget. GitHub push webhooks do not refresh snapshots in
+the configured host environment. The Blueprint schedules intake every five minutes UTC with a 180-second
+command deadline, under the daily dispatch allowance. GitHub push webhooks do not refresh snapshots in
 connector mode.
 
 Run `npm run setup:preflight`, `npm run setup:render`, `npm run doctor` using the
 existing setup runbook. Connector snapshots need the pinned Claude CLI, Go,
 Python, uv, Node, git, Chromium and APK inspection tools installed by
-`sandbox/install-connector-tools.sh`. Provision snapshot builds under a separate
-setup reservation. Connector tasks refuse to build a missing snapshot inline.
+`sandbox/install-connector-tools.sh`. Run `npm run setup:snapshot -- --repo noresponsehq/noresponse` to build the image
+under a separate journalled setup reservation. Connector tasks refuse to build a missing snapshot inline.
 Render SDK 1.8 exposes the current `render.sandboxes` client and explicit plans.
 
 ## Durable execution and cost
@@ -79,8 +79,10 @@ The Render bound is US$0.316/hour for a fully busy 2c-4g sandbox; workflow flex
 uses US$0.40/hour at its maximum CPU/RAM. Fly shared-cpu-4x plus 4 GiB in iad
 uses a conservative US$0.038/hour compute bound. These are compute ceilings,
 not whole-invoice promises. Network transfer, retained snapshots and gateway
-baseline need their own enforced allowance. Keep paid browsing disabled until
-the trusted network supervisor and that accounting have passed live proof.
+baseline use conservative estimates in the same admission budget. The user
+accepts possible provider billing overruns. Connector builders and restores use
+Render `allow-all`; local Chromium has unrestricted networking. No custom
+network supervisor or byte-quota helper is installed or executed.
 
 ## Evidence and verification
 
@@ -110,11 +112,46 @@ version reads and the search summary must identify the merged release SHA.
 A partial search, rollback or missing evidence cannot close Linear.
 
 `npm run check` runs lint, TypeScript and the fake-service boundary suite. Live
-Claude subscription, sandbox image installation, network billing limits, Fly
+Claude subscription, sandbox image installation, unrestricted networking, Fly
 probing and complete deployment are separate checks and must be reported as
 unverified until exercised. Local passing tests do not claim those results.
 
-Supervisor execution remains disabled until independent acceptance supplies a
-reviewed digest. Tests passing locally do not override that gate. Baseline and
-storage accounting, complete network billing admission and live lifecycle proof
-remain incomplete; no paid lifecycle is enabled by this implementation snapshot.
+The daily service allowance is admitted before gateway dispatch, intake or image
+setup: US$1 baseline, US$0.50 retained storage and US$1 dispatch overhead. A
+stable UTC-day/policy key prevents duplicate charges. These estimates cover
+otherwise unclaimed dispatch and service work, cron runtime and its $1 monthly
+minimum, plus estimated service/cron build costs; they are not provider ceilings.
+Each Render attempt adds US$0.20 estimated traffic to its compute reservation;
+each Fly probe does the same. `connectors.costs` configures these estimates.
+Increasing a policy mid-day admits a new full allowance. Reduce future estimates
+only after comparing provider charges; changing policy never refunds prior costs.
+The host records maintenance allowances as blocked terminal runs with an explicit
+accounting reason because completed runs require production proof. This does not
+claim a connector outcome. Intake excludes those maintenance runs.
+
+A connector reserves US$8 including US$0.50 ledger tools. An implementation task
+reserves four hours of workflow compute; CI/release continuations reserve twenty
+minutes with matching host/provider deadlines. Snapshot setup reserves one hour
+of builder and host compute plus estimated traffic; storage is included in the
+daily allowance. Interrupted ambiguous creations retain their full reservation.
+The launcher uses standard `setpriv` with a clean root environment, closed extra
+descriptors, empty capabilities and no-new-privs before candidate environment is
+applied. Provider VM isolation and termination deadlines remain in place.
+
+The revised ordinary integration must pass independent review before live factory
+execution. The complete live lifecycle remains unverified by local tests.
+
+Factory Fly probes use `FACTORY_FLY_API_TOKEN`, scoped to `nr-probe`. The host
+passes it to the Fly child process as `FLY_API_TOKEN`; it never overwrites the
+main checkout's generic Fly credentials. Production `version,search` smoke
+receives only its search key and needs no Fly credential.
+
+When available, `NR_PROD_WORKER_LOGS_TOKEN` supplies production worker log
+attribution. Setup copies this optional secret to the workflows group without
+requiring it. Missing attribution leaves actual search gaps visible and cannot
+be replaced by the probe token or generic CLI authentication.
+
+The intake group holds only Render dispatch, ledger operator, Linear and GitHub
+App credentials plus actor, installation, team and assignee settings. It receives
+no Claude subscription, Fly or production search/log secret. Intake starts tasks;
+it never executes candidates or calls a model.
