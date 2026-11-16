@@ -19,6 +19,8 @@ export interface FactoryConfig {
 		dailyUsd: number;
 		reserveUsd: number;
 		toolAllowanceUsd: number;
+		/** Model ID passed to subscription Claude Code with --model and recorded in each verification bundle. */
+		model: string;
 		costs?: { baselineDailyUsd: number; storageDailyUsd: number; dispatchDailyUsd: number; sandboxTrafficUsd: number; probeTrafficUsd: number };
 	};
 	/** Repositories the factory acts on, keyed by "owner/name". Webhooks from any other repository are ignored. */
@@ -47,7 +49,7 @@ export function defineFactoryConfig(config: FactoryConfig): FactoryConfig {
 }
 
 export default defineFactoryConfig({
-	connectors: { marker: "factory:connector", dailyUsd: 50, reserveUsd: 8, toolAllowanceUsd: 0.5 },
+	connectors: { marker: "factory:connector", dailyUsd: 50, reserveUsd: 8, toolAllowanceUsd: 0.5, model: "claude-opus-5-5" },
 	repos: {
 		"noresponsehq/noresponse": {
 			baseBranch: "main",

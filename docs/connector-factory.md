@@ -111,6 +111,34 @@ with the five-identity sample; it is not exhaustive provider coverage. Both
 version reads and the search summary must identify the merged release SHA.
 A partial search, rollback or missing evidence cannot close Linear.
 
+### Verification bundle
+
+Each candidate and production verification stores one typed bundle
+(`app/connectors/bundle.ts`) as `verification` or `production` evidence. It names
+the task and acceptance-recipe digests; the candidate, trusted base and observed
+release SHAs; fixture and session-generation digests; the exact selection and
+reproduction commands; expected-versus-observed assertions; the paired negative
+control; artifact references with SHA-256; the model and harness identity
+(model, Claude Code version, launcher, prompt and skill digests); uncovered
+conditions; and a failure class: `missing_prerequisite`, `product_failure`,
+`stale_control`, `superseded_release` or `environment_failure`.
+
+Artifacts go to the same evidence route before any temporary directory is
+deleted, as UTF-8 chunks of at most 12,000 characters, each bound to the file's
+SHA-256. A binary file, a file over 64 chunks, or a chunk the ledger refuses as
+sensitive keeps only its digest and is listed as uncovered. A ledger outage
+fails the run.
+
+The verifier names its negative control as connector test files and a
+`go test -run` pattern. The host copies those files onto the trusted base, where
+the pattern must fail, and runs it on the candidate, where it must pass. The
+host, not the agent summary, refuses a review or production proof whose bundle
+is missing, malformed, for another revision, failing, without passing
+assertions or uploaded artifacts, or, for a candidate, without a valid negative
+control and harness identity. The ledger client keeps known `cleanup_only`,
+`resource_charges` and `evidence_ids` when a heartbeat or evidence response
+omits them, and refuses a claim that omits them.
+
 `npm run check` runs lint, TypeScript and the fake-service boundary suite. Live
 Claude subscription, sandbox image installation, unrestricted networking, Fly
 probing and complete deployment are separate checks and must be reported as

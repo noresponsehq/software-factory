@@ -1,24 +1,82 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { type RepoContext, requireEnv } from "../config/index.js";
 import { gitData, githubToken } from "../github/index.js";
+import { type Assertion, type FailureClass, sha256, uploadArtifacts, type VerificationBundle } from "./bundle.js";
 import { FactoryFailure } from "./failure.js";
 import { productionFailure } from "./production-evidence.js";
 
 const exec = promisify(execFile);
-export async function productionSearch(repo: RepoContext, merge: string, signal?: AbortSignal) {
+const SELECTION = "version,search --size 5";
+const STAGE_CLASS: Record<string, FailureClass> = {
+	prerequisites: "missing_prerequisite",
+	version_before: "superseded_release",
+	version_after: "superseded_release",
+	production_smoke: "product_failure",
+	read_summary: "product_failure",
+	validate_result: "product_failure",
+};
+export const productionFailureClass = (stage: string): FailureClass => STAGE_CLASS[stage] ?? "environment_failure";
+
+async function proofFiles(dir: string) {
+	const entries = await readdir(dir, { recursive: true, withFileTypes: true }).catch(() => []);
+	const files: { name: string; content: Buffer }[] = [];
+	for (const entry of entries.filter((e) => e.isFile()).slice(0, 60)) {
+		const path = join(entry.parentPath, entry.name);
+		files.push({ name: path.slice(dir.length + 1), content: await readFile(path) });
+	}
+	return files;
+}
+
+export async function productionSearch(
+	repo: RepoContext,
+	merge: string,
+	options: { taskSha256: string; store: (payload: Record<string, unknown>) => Promise<string> },
+	signal?: AbortSignal,
+) {
 	if (!/^[a-f0-9]{40}$/.test(merge)) throw new Error("Invalid production revision");
 	const trusted = await gitData(repo).getRef(repo.config.baseBranch);
 	if (!trusted) throw new Error("Cannot resolve trusted operator source");
 	const dir = await mkdtemp(join(tmpdir(), "nr-tmp-production-"));
 	let stage = "initialize";
 	let smokeExit: number | undefined;
+	let recipe = sha256(SELECTION);
+	let observed: string | null = null;
+	const assertions: Assertion[] = [];
+	const bundle = async (outcome: VerificationBundle["outcome"], failure: FailureClass | null): Promise<VerificationBundle> => {
+		const uploaded = await uploadArtifacts(await proofFiles(join(dir, "proof")), options.store);
+		return {
+			version: 1,
+			stage: "production",
+			outcome,
+			failure_class: failure,
+			task_sha256: options.taskSha256,
+			acceptance_recipe_sha256: recipe,
+			candidate_sha: merge,
+			trusted_base_sha: trusted,
+			observed_release_sha: observed,
+			fixtures: [],
+			session_generations: [],
+			selection: SELECTION,
+			reproduction: [
+				`git checkout ${trusted} && cd apps/identity && bash deploy/fly/prod-smoke.sh registry.fly.io/nr-ii-prod-api:${merge} <previous> --only version,search`,
+			],
+			assertions,
+			negative_control: null,
+			artifacts: uploaded.artifacts,
+			harness: null,
+			uncovered: ["production smoke has no paired negative control", ...uploaded.uncovered].slice(0, 50),
+		};
+	};
 	try {
 		signal?.throwIfAborted();
+		stage = "prerequisites";
+		const searchKey = requireEnv("NR_PROD_SEARCH_API_KEY");
+		stage = "initialize";
 		const cleanEnv = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
 		const checkout = async (fullName: string, name: string, sha: string, destination: string) => {
 			await exec("git", ["init", destination], { env: cleanEnv, signal });
@@ -44,6 +102,7 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 		const before = z
 			.object({ build_version: z.string() })
 			.parse(await (await fetch("https://api.noresponse.org/version", { signal: AbortSignal.timeout(30000) })).json());
+		observed = /^[a-f0-9]{40}$/.test(before.build_version) ? before.build_version : null;
 		if (before.build_version !== merge) throw new Error("Production is not running the merged revision");
 		const previousSha = (await gitData(repo).getCommit(merge)).parents[0];
 		if (!previousSha) throw new Error("Release has no previous revision");
@@ -52,6 +111,8 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 		await writeFile(empty, "", { mode: 0o600 });
 		const image = `registry.fly.io/nr-ii-prod-api:${merge}`;
 		const identity = join(dir, "apps/identity");
+		stage = "read_recipe";
+		recipe = sha256(JSON.stringify([SELECTION, await readFile(join(identity, "deploy/fly/prod-smoke.sh"), "utf8")]));
 		stage = "fetch_sdk_generator";
 		const generator = z
 			.strictObject({
@@ -71,7 +132,7 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 				NR_FLY_ENV: "prod",
 				NR_PROD_SMOKE_ENV_FILES: empty,
 				NR_PROD_SMOKE_DIR: join(dir, "proof"),
-				NR_PROD_SEARCH_API_KEY: requireEnv("NR_PROD_SEARCH_API_KEY"),
+				NR_PROD_SEARCH_API_KEY: searchKey,
 				NR_PROD_WORKER_LOGS_TOKEN: process.env.NR_PROD_WORKER_LOGS_TOKEN ?? "",
 				NORESPONSE_SDKGEN_SOURCE: generatorSource,
 			},
@@ -84,6 +145,7 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 		const after = z
 			.object({ build_version: z.string() })
 			.parse(await (await fetch("https://api.noresponse.org/version", { signal: AbortSignal.timeout(30000) })).json());
+		observed = /^[a-f0-9]{40}$/.test(after.build_version) ? after.build_version : null;
 		if (after.build_version !== merge) throw new Error("Production changed during verification");
 		stage = "read_summary";
 		const summary = z
@@ -97,15 +159,21 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 			.parse(JSON.parse(await readFile(join(dir, "proof/search-summary.json"), "utf8")));
 		stage = "validate_result";
 		z.object({ ok: z.literal(true), commit: z.literal(merge) }).parse(JSON.parse(result.stdout));
+		const checks = summary.harness.steps.length + summary.providers.search.steps.length;
+		assertions.push(
+			{ name: "release", expected: merge, observed: merge, passed: true },
+			{ name: "smoke checks", expected: "all pass, none skipped", observed: `${checks} pass, ${summary.gaps.length} skipped`, passed: true },
+		);
 		return {
 			sha: merge,
 			operator_sha: trusted,
-			selection: "version,search --size 5",
+			selection: SELECTION,
 			exit_code: 0,
 			status: summary.status,
-			checks: summary.harness.steps.length + summary.providers.search.steps.length,
+			checks,
 			failed: 0,
 			skipped: summary.gaps.length,
+			bundle: await bundle("verified", null),
 		};
 	} catch (error) {
 		let summary: unknown;
@@ -116,7 +184,20 @@ export async function productionSearch(repo: RepoContext, merge: string, signal?
 		}
 		const payload = productionFailure(stage, error, summary);
 		if (smokeExit !== undefined) payload.exit_code = smokeExit;
-		throw new FactoryFailure("production", { ...payload, sha: merge, operator_sha: trusted, selection: "version,search --size 5" });
+		const failure = productionFailureClass(stage);
+		assertions.push({ name: stage, expected: "pass", observed: "fail", passed: false });
+		let failed: VerificationBundle | null = null;
+		try {
+			failed = await bundle("failed", failure);
+		} catch {}
+		throw new FactoryFailure("production", failure, {
+			...payload,
+			failure_class: failure,
+			sha: merge,
+			operator_sha: trusted,
+			selection: SELECTION,
+			bundle: failed,
+		});
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
