@@ -63,6 +63,23 @@ deployed values. Doctor checks configuration, GitHub access, registered tasks,
 ledger operator cursor, Linear authentication and Fly probe machine access.
 Presence of the subscription token is not proof of a successful Claude run.
 
+`npm run doctor -- --live [--revision <sha>]` checks reality against the intended
+revision (default: this checkout's HEAD). It fails, naming each mismatch, when the
+`factory-workflows` Workflow's newest ready version is another commit, when any
+task is not registered on that version, when `factory-gateway` or
+`factory-intake` has no live deploy of that commit, or when the `doctor` task,
+run inside the deployed Workflow, cannot create and terminate a sandbox or reach
+the ledger Worker, GitHub or the noresponse API. A suspended service is a warning.
+
+Without the Blueprint, create the services from the branch with auto-deploy off:
+`render workflows create --name factory-workflows --branch <branch> ...` with the
+build and start commands in `render.yaml`, then link `software-factory-shared`
+and `software-factory-workflows` with `POST /v1/env-groups/{id}/services/{id}`
+and run `render workflows versions release <id> --commit <sha> --wait`. Create
+`factory-gateway` and `factory-intake` with `POST /v1/services` on the starter
+plan, set `RENDER_WORKFLOW_SLUG` to the Workflow's slug, link their groups, and
+deploy the same commit.
+
 The workflows build installs Fly CLI 0.5.10, uv 0.12.2 and Go 1.27.4 under
 `.factory-tools`, checking pinned archive hashes. Its start command checks these
 binaries and git, jq, Node, npm, curl and Python before registering tasks. The

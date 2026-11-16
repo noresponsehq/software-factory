@@ -36,17 +36,23 @@ export async function assertProbe(control: Control, lookup: (value: string, netw
 			const response = await lookup(value, true);
 			const reading = Reading.parse(response.output);
 			if (reading.error || reading.found !== found || (found && known.Fields.some((field) => !reading.fields.includes(field))))
-				throw new FactoryFailure("probe", { status: "fail", reason: "trusted_control_assertion", checks, failed: 1, skipped: 0 });
+				throw new FactoryFailure("probe", "product_failure", { status: "fail", reason: "trusted_control_assertion", checks, failed: 1, skipped: 0 });
 			times.push(response.elapsedMs);
 			checks++;
 		}
 	}
 	const denied = Reading.parse((await lookup(known.Present, false)).output);
 	if (!denied.error || denied.found)
-		throw new FactoryFailure("probe", { status: "fail", reason: "network_failure_was_not_an_error", checks, failed: 1, skipped: 0 });
+		throw new FactoryFailure("probe", "product_failure", {
+			status: "fail",
+			reason: "network_failure_was_not_an_error",
+			checks,
+			failed: 1,
+			skipped: 0,
+		});
 	checks++;
 	const p95 = times.sort((a, b) => a - b)[Math.ceil(times.length * 0.95) - 1];
 	if (p95 > control.admitted_ms)
-		throw new FactoryFailure("probe", { status: "fail", reason: "host_measured_latency", checks, failed: 1, skipped: 0 });
+		throw new FactoryFailure("probe", "product_failure", { status: "fail", reason: "host_measured_latency", checks, failed: 1, skipped: 0 });
 	return { status: "pass", checks, failed: 0, skipped: 0, trials: control.trials, p95_ms: p95, verdict_owner: "trusted_host" };
 }

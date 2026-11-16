@@ -21,6 +21,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: shellcheck sandbox/*.sh sandbox/build/*.sh
+      - run: sudo bash tests/claude-launcher-linux.sh
       - run: npm audit --omit=dev --audit-level=high
 
   # Validation checks plans, regions, and conflicts against a real workspace, so it needs an API key.

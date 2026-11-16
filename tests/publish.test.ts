@@ -502,7 +502,6 @@ describe("publish against a subverted sandbox", () => {
 				cwd: dir,
 				env,
 				encoding: "utf8",
-				input: "/etc/passwd",
 			}).trim();
 		run("read-tree", base);
 		const link = execFileSync("git", ["hash-object", "-w", "--stdin"], {

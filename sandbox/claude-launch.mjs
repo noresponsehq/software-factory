@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, mkdirSync, chownSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, mkdirSync, chownSync, chmodSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const rootEnv = { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" };
@@ -17,7 +17,8 @@ if (process.argv[2] === "--child") {
 	let status;
 	try { status = JSON.parse(auth.stdout); } catch { process.exit(1); }
 	if (auth.status !== 0 || !status.loggedIn || !["claude.ai", "oauth_token"].includes(status.authMethod)) process.exit(1);
-	const run = spawnSync("claude", ["-p", "--output-format", "json", "--json-schema", JSON.stringify(input.schema),
+	if (typeof input.model !== "string" || !/^[a-z0-9.-]{1,100}$/.test(input.model)) process.exit(1);
+	const run = spawnSync("claude", ["-p", "--model", input.model, "--output-format", "json", "--json-schema", JSON.stringify(input.schema),
 		"--permission-mode", "bypassPermissions", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
 		"--setting-sources", "", "--settings", `${home}/settings.json`, "--no-session-persistence", "--max-turns", "100"], { ...opts, input: input.prompt });
 	if (run.status !== 0) process.exit(1);
@@ -27,6 +28,7 @@ if (process.argv[2] === "--child") {
 	const dir = process.argv[2];
 	const input = JSON.parse(readFileSync(`${dir}/input.json`, "utf8"));
 	rmSync(`${dir}/input.json`);
+	chmodSync(process.argv[1], 0o444);
 	if (!Number.isInteger(input.seconds) || input.seconds < 1 || input.seconds > 3600) process.exit(1);
 	const home = `${dir}/home`;
 	mkdirSync(home, { mode: 0o700 });
