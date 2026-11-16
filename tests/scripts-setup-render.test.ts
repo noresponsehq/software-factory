@@ -138,7 +138,12 @@ describe("setup:render", () => {
 
 	it("refuses to pick between two groups with the same name", async () => {
 		const duplicate = { name: "software-factory-gateway", ownerId: WORKSPACE, envVars: [] };
-		const world = renderWorld({ groups: [{ ...duplicate, id: "evg-1" }, { ...duplicate, id: "evg-2" }] });
+		const world = renderWorld({
+			groups: [
+				{ ...duplicate, id: "evg-1" },
+				{ ...duplicate, id: "evg-2" },
+			],
+		});
 		const { code, output } = await run(world);
 		expect(code).toBe(1);
 		expect(output).toContain("2 env groups are named software-factory-gateway");
