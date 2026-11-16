@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { EvidenceRefused } from "./bundle.js";
+import { TrustedControls } from "./trusted-controls.js";
 
 export const Phase = z.enum(["research", "implementation", "review", "ci", "release", "production_verified"]);
 export const Resource = z.strictObject({
@@ -125,6 +126,22 @@ export class Ledger {
 		if (result.run_id !== claim.run_id) throw new Error("Factory lease changed owner");
 		const { state, ...envelope } = result;
 		Object.assign(claim, envelope, { state: mergeState(claim.state, state) });
+	}
+	async controls(connector: string) {
+		const response = await this.request(
+			`${this.url.replace(/\/$/, "")}/ledger/controls/${z
+				.string()
+				.regex(/^[a-z0-9_]+$/)
+				.parse(connector)}`,
+			{
+				method: "GET",
+				headers: { Authorization: `Bearer ${this.operatorToken}`, "Content-Type": "application/json" },
+				signal: AbortSignal.timeout(30000),
+				redirect: "error",
+			},
+		);
+		if (!response.ok) throw new Error(`Factory ledger controls returned ${response.status}`);
+		return TrustedControls.parse(await response.json()).controls;
 	}
 	async evidence(
 		claim: Claimed,

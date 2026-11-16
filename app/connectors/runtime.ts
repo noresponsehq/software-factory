@@ -230,9 +230,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 							const probeResult = await withSandbox(
 								() => open(repo.config.baseBranch),
 								async (frozen) => {
-									const source = await trustedBuild(frozen, gh.http, repo.fullName, candidate.head, input.connector);
+									const source = await trustedBuild(frozen, gh.http, repo.fullName, candidate.head, input.connector, (id) => ledger.controls(id));
 									const trustedChecks = await runVerify(frozen, [
-										`cd apps/identity && go test -count=1 ./internal/connectors/${input.connector} ./internal/connector/...`,
+										`cd apps/identity && go test -count=1 ${source.scope.packages.map((p) => `./${p.slice("apps/identity/".length)}`).join(" ")} ./internal/connector/...`,
 									]);
 									if (!trustedChecks.length || trustedChecks.some((c) => !c.passed))
 										throw new FactoryFailure("verification", "stale_control", { status: "fail", reason: "trusted_main_tests", head: candidate.head });
@@ -241,11 +241,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 									const result = await probe(
 										frozen,
 										{
-											connector: input.connector,
 											head: candidate.head,
 											goVersion: go.stdout.trim(),
-											control: source.control,
-											session: process.env[`NR_PROBE_SESSION_${input.connector.toUpperCase()}`],
+											targets: source.targets.map((t) => ({ ...t, session: process.env[`NR_PROBE_SESSION_${t.connector.toUpperCase()}`] })),
 											proxies: process.env.NR_PROBE_PROXIES_RESIDENTIAL,
 										},
 										flyExec(requireEnv("FACTORY_FLY_API_TOKEN"), lease.signal),
@@ -264,13 +262,13 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 										{ sandbox: frozen, sha: frozen.headSha },
 										{ sandbox, sha: candidate.head },
 									);
-									const { control: _control, ...binding } = source;
+									const { targets, ...binding } = source;
 									return {
-										probe: { ...result, source: binding },
+										probe: { ...result, source: { ...binding, selected: targets.map((t) => t.connector) } },
 										negative,
 										base: frozen.headSha,
-										control: source.control,
-										trustedCommand: `cd apps/identity && go test -count=1 ./internal/connectors/${input.connector} ./internal/connector/...`,
+										control: targets,
+										trustedCommand: `cd apps/identity && go test -count=1 ${source.scope.packages.map((p) => `./${p.slice("apps/identity/".length)}`).join(" ")} ./internal/connector/...`,
 									};
 								},
 							);
@@ -304,8 +302,13 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 								{
 									name: "trusted probe",
 									expected: "pass",
-									observed: String(probeResult.probe.result.status),
-									passed: probeResult.probe.result.status === "pass",
+									observed: Object.entries(probeResult.probe.result)
+										.map(([connector, reading]) => `${connector} ${reading.status}`)
+										.join(", ")
+										.slice(0, 500),
+									passed:
+										Object.values(probeResult.probe.result).length > 0 &&
+										Object.values(probeResult.probe.result).every((reading) => reading.status === "pass"),
 								},
 							];
 							if (negative)

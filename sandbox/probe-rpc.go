@@ -13,6 +13,21 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "policy" {
+		_ = json.NewEncoder(os.Stdout).Encode(struct {
+			Trials     int   `json:"trials"`
+			AdmittedMS int64 `json:"admitted_ms"`
+		}{connector.Trials, connector.Admitted.Milliseconds()})
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "connectors" {
+		ids := []string{}
+		for _, declaration := range connectors.All {
+			ids = append(ids, declaration.ID)
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(ids)
+		return
+	}
 	if len(os.Args) != 3 {
 		os.Exit(2)
 	}
