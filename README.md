@@ -6,6 +6,10 @@ uses Claude Code subscription authentication and the D1 factory ledger. Connecto
 traffic and service reservations share a US$50 daily admission budget; provider
 bills may exceed these estimates. Live deployment requires separate verification.
 
+The [task benchmark](scripts/benchmark/README.md) measures how reliably the
+agents complete or correctly stop on ten NoResponse tasks. Run it after a
+change to prompts, skills, CLI versions, models, retry policy or verifier logic.
+
 The upstream template and its example workflows are described below.
 
 software-factory is an extensible template for building GitHub-native coding agent
