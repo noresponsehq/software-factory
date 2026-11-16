@@ -53,7 +53,7 @@ export function affectedConnectors(listing: string, connectors: string[], packag
 	);
 	const packageOf = (id: string) =>
 		[`${MODULE}internal/connectors/${id}`, `${MODULE}internal/${id}`, `${MODULE}internal/connectors`].find((p) => deps.has(p));
-	const selected = connectors.filter((id) => {
+	const selected = [...new Set(connectors)].filter((id) => {
 		const pkg = packageOf(id);
 		return pkg !== undefined && [...changed].some((c) => deps.get(pkg)?.has(c));
 	});
@@ -88,15 +88,14 @@ export async function trustedBuild(
 			tree: z.array(z.object({ path: z.string(), mode: z.string(), type: z.string(), sha: z.string().regex(/^[a-f0-9]{40}$/) })),
 		})
 		.parse(await http.json("GET", `/repos/${repo}/git/trees/${head}`, { query: { recursive: "1" } }));
-	const own = `apps/identity/internal/connectors/${connector}`;
 	const inPackage = (path: string, pkg: string) => path.startsWith(`${pkg}/`) && !path.slice(pkg.length + 1).includes("/");
 	const files = tree.tree.filter((f) => scope.packages.some((p) => inPackage(f.path, p)) && f.path.endsWith(".go") && !f.path.endsWith("_test.go"));
 	if (
-		!files.some((f) => inPackage(f.path, own)) ||
+		!files.length ||
 		files.length > 300 ||
 		files.some((f) => f.type !== "blob" || f.mode !== "100644" || !/^[A-Za-z0-9_-]+\.go$/.test(f.path.split("/").pop() as string))
 	)
-		throw new Error("Candidate overlay must contain only regular package Go files, the connector's own included");
+		throw new Error("Candidate overlay must contain regular Go files from the changed packages");
 	const mainPath = "/opt/factory/repo/apps/identity/cmd/probe/main.go";
 	const main = (await sandbox.download(mainPath)).toString();
 	if (main.split("func main() {").length !== 2) throw new Error("Trusted probe entry point changed");
@@ -174,12 +173,13 @@ export async function trustedBuild(
 		if (ledgerControls.length) {
 			const pinnedControls = pinControls(id, ledgerControls);
 			const declared = await sandbox.exec(`/tmp/factory-control control ${shq(id)}`, { asRunner: true, timeoutMs: 60000 });
-			const fields = declared.exitCode === 0 ? Control.parse(JSON.parse(declared.stdout)).known.Fields : [];
+			const known = declared.exitCode === 0 ? Control.parse(JSON.parse(declared.stdout)).known : null;
+			const fields = known?.Fields ?? [];
 			const by = (pinnedControls[0] as TrustedControl).by;
 			targets.push({
 				connector: id,
 				trusted: pinnedControls,
-				control: { known: { By: by, Present: "", Absent: "", Fields: fields, Supplied: true, PresentOnly: false, Paid: false }, ...policy },
+				control: { known: { By: by, Present: "", Absent: "", Fields: fields, Supplied: true, PresentOnly: false, Paid: known?.Paid ?? false }, ...policy },
 			});
 			continue;
 		}
