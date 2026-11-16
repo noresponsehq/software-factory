@@ -20,14 +20,12 @@ export function validateConfig(c: FactoryConfig): void {
 		c.connectors &&
 		(!Number.isFinite(c.connectors.dailyUsd) ||
 			c.connectors.dailyUsd <= 0 ||
-			!Number.isInteger(c.connectors.concurrency) ||
-			c.connectors.concurrency < 1 ||
 			c.connectors.reserveUsd <= 0 ||
 			c.connectors.reserveUsd > c.connectors.dailyUsd ||
 			c.connectors.toolAllowanceUsd < 0 ||
 			c.connectors.toolAllowanceUsd > c.connectors.reserveUsd)
 	)
-		throw new Error("Invalid connector budget or concurrency");
+		throw new Error("Invalid connector budget");
 	for (const [fullName, repo] of Object.entries(c.repos)) {
 		if (repo.egress !== undefined && repo.egress !== "allow-all") assertEgressHosts(repo.egress, `factory.config.ts repos["${fullName}"]`);
 	}

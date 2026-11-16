@@ -16,7 +16,7 @@ describe("external resource charges", () => {
 			run_id: "run",
 			token: "test",
 			expires_at: "later",
-			state: { phase: "research", version: 0, evidence_ids: [], resource_charges: [] },
+			state: { cleanup_only: false, phase: "research", version: 0, evidence_ids: [], resource_charges: [] },
 		};
 		const checkpoint = vi.fn().mockRejectedValue(new Error("budget exhausted"));
 		const budget = new Budget(claim, { checkpoint } as unknown as Lease);
@@ -30,6 +30,7 @@ describe("external resource charges", () => {
 			token: "test",
 			expires_at: "later",
 			state: {
+				cleanup_only: false,
 				phase: "research",
 				version: 0,
 				evidence_ids: [],

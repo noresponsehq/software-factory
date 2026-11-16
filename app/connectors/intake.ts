@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { config, requireEnv, requireRepo } from "../config/index.js";
 import { githubFor } from "../github/index.js";
-import { Claimed, Ledger } from "./ledger.js";
+import { drainHealth } from "./health.js";
+import { Ledger, RunEnvelope } from "./ledger.js";
 import { Linear } from "./linear.js";
 
 const marker = (text: string) => /<!--\s*connector:([a-z0-9_]+)\s*-->/.exec(text)?.[1];
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
-export async function intake(start: (input: object, key: string) => Promise<unknown>, after = 0) {
+export async function intake(start: (input: object, key: string) => Promise<unknown>) {
 	if (!config.connectors) throw new Error("Connector mode is not configured");
 	const repoName = Object.keys(config.repos)[0];
 	if (!repoName) throw new Error("No connector repository configured");
@@ -24,17 +25,25 @@ export async function intake(start: (input: object, key: string) => Promise<unkn
 		tool_allowance_usd: config.connectors.toolAllowanceUsd,
 		lease_seconds: 3600,
 	};
-	const assigned = await linear.query(
-		'query($assignee:ID!){issues(first:100,filter:{assignee:{id:{eq:$assignee}},state:{type:{nin:["completed","canceled"]}}}){nodes{identifier title description updatedAt}}}',
-		{ assignee: requireEnv("FACTORY_LINEAR_ASSIGNEE") },
-	);
-	const issues = z
-		.object({
-			issues: z.object({
-				nodes: z.array(z.object({ identifier: z.string(), title: z.string(), description: z.string().nullable(), updatedAt: z.string() })),
-			}),
-		})
-		.parse(assigned).issues.nodes;
+	const issueSchema = z.object({ identifier: z.string(), title: z.string(), description: z.string().nullable(), updatedAt: z.string() });
+	const issues: z.infer<typeof issueSchema>[] = [];
+	let cursor: string | null = null;
+	for (let page = 0; ; page++) {
+		if (page >= 100) throw new Error("Assigned Linear issues exceed bounded pagination");
+		const assigned = await linear.query(
+			'query($assignee:ID!,$after:String){issues(first:100,after:$after,filter:{assignee:{id:{eq:$assignee}},state:{type:{nin:["completed","canceled"]}}}){nodes{identifier title description updatedAt} pageInfo{hasNextPage endCursor}}}',
+			{ assignee: requireEnv("FACTORY_LINEAR_ASSIGNEE"), after: cursor },
+		);
+		const result = z
+			.object({
+				issues: z.object({ nodes: z.array(issueSchema), pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }) }),
+			})
+			.parse(assigned).issues;
+		issues.push(...result.nodes);
+		if (!result.pageInfo.hasNextPage) break;
+		if (!result.pageInfo.endCursor || result.pageInfo.endCursor === cursor) throw new Error("Linear cursor did not advance");
+		cursor = result.pageInfo.endCursor;
+	}
 	for (const issue of issues) {
 		const connector = marker(issue.description ?? "");
 		if (!connector) continue;
@@ -53,7 +62,7 @@ export async function intake(start: (input: object, key: string) => Promise<unkn
 	}
 	const github = z
 		.array(z.object({ number: z.number().int(), body: z.string().nullable(), title: z.string(), pull_request: z.unknown().optional() }))
-		.parse(await gh.http.json("GET", `/repos/${repoName}/issues`, { query: { labels: config.connectors.marker, state: "open", per_page: 100 } }));
+		.parse(await gh.http.paginate(`/repos/${repoName}/issues`, { query: { labels: config.connectors.marker, state: "open", per_page: 100 } }));
 	for (const issue of github) {
 		if (issue.pull_request) continue;
 		const connector = marker(issue.body ?? "");
@@ -67,13 +76,7 @@ export async function intake(start: (input: object, key: string) => Promise<unkn
 			event_id,
 		);
 	}
-	const health = z
-		.object({
-			events: z.array(z.object({ event_id: z.string(), connector: z.string(), condition_hash: z.string(), rev: z.number().int() })),
-			next: z.number().int(),
-		})
-		.parse(await ledger.call(`events?after=${z.number().int().nonnegative().parse(after)}`));
-	for (const event of health.events) {
+	const after = await drainHealth(ledger, async (event) => {
 		const issue = issues.find((i) => marker(i.description ?? "") === event.connector);
 		const linear_issue =
 			issue?.identifier ??
@@ -89,12 +92,12 @@ export async function intake(start: (input: object, key: string) => Promise<unkn
 			},
 			event.event_id,
 		);
-	}
+	});
 	const pending = z
 		.object({
 			runs: z.array(
-				Claimed.extend({
-					state: Claimed.shape.state.extend({
+				RunEnvelope.extend({
+					state: RunEnvelope.shape.state.extend({
 						event_id: z.string(),
 						connector: z.string(),
 						linear_issue: z.string(),
@@ -107,7 +110,7 @@ export async function intake(start: (input: object, key: string) => Promise<unkn
 		})
 		.parse(await ledger.call("runs?unfinished=true"));
 	for (const run of pending.runs) {
-		if (["research", "implementation", "review"].includes(run.state.phase) && new Date(run.expires_at).getTime() > Date.now()) continue;
+		if (new Date(run.expires_at).getTime() > Date.now()) continue;
 		const issue = issues.find((i) => i.identifier === run.state.linear_issue);
 		await start(
 			{
@@ -123,5 +126,5 @@ export async function intake(start: (input: object, key: string) => Promise<unkn
 			`continue:${run.run_id}:${run.state.version}`,
 		);
 	}
-	return { next: health.next };
+	return { next: after };
 }

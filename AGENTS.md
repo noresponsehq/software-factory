@@ -18,8 +18,9 @@ This file applies to the whole repository.
 - Local development:
   [CONTRIBUTING.md](CONTRIBUTING.md)
 
-Follow runbooks in order. Stop at every human checkpoint. Do not claim setup
-is complete until both `doctor` checks and the Triage smoke test pass.
+Follow runbooks in order. Existing user authorization governs ordinary setup and delivery.
+Do not claim connector setup is complete until both service `doctor` checks and
+the reserved connector lifecycle smoke pass.
 
 ## System boundaries
 

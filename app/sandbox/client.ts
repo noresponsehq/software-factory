@@ -151,6 +151,21 @@ export class SandboxClient {
 		}
 	}
 
+	async confirmTerminated(id: string): Promise<void> {
+		const until = Date.now() + this.t.verifyTimeoutMs;
+		for (;;) {
+			try {
+				const sandbox = await this.call(() => this.api.get(id));
+				if (sandbox.status === "terminated") return;
+			} catch (error) {
+				if (error instanceof ClientError && error.statusCode === 404) return;
+				throw error;
+			}
+			if (Date.now() >= until) throw new Error("Sandbox termination is not confirmed; keep its reservation");
+			await sleep(this.t.pollMs);
+		}
+	}
+
 	async terminateQuietly(id: string): Promise<void> {
 		await this.terminate(id).catch((err) => log("warn", "terminate failed", { sandbox: id, error: errorMessage(err) }));
 	}

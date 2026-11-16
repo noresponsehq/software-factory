@@ -6,22 +6,27 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type { Sandbox } from "../sandbox/index.js";
+import { reviewedSupervisor } from "../sandbox/supervision.js";
+import { FactoryFailure } from "./failure.js";
+import { assertProbe, Control } from "./probe-assertions.js";
 
 const execute = promisify(execFile);
 export interface ProbeInput {
 	connector: string;
 	head: string;
 	goVersion: string;
+	control: Control;
 	session?: string;
 	proxies?: string;
 }
 export type HostExec = (args: string[]) => Promise<string>;
-export function flyExec(token: string): HostExec {
+export function flyExec(token: string, signal?: AbortSignal): HostExec {
 	return async (args) => {
 		try {
 			const result = await execute("fly", args, {
 				env: { PATH: process.env.PATH, HOME: process.env.HOME, FLY_API_TOKEN: token },
 				timeout: 180000,
+				signal,
 				maxBuffer: 8 * 1024 * 1024,
 			});
 			return result.stdout;
@@ -30,37 +35,53 @@ export function flyExec(token: string): HostExec {
 		}
 	};
 }
+export async function terminateProbe(host: HostExec, id: string) {
+	const listed = z
+		.array(z.object({ id: z.string(), state: z.string() }))
+		.parse(JSON.parse(await host(["machine", "list", "--app", "nr-probe", "--json"])));
+	if (!listed.some((machine) => machine.id === id && machine.state !== "destroyed")) return;
+	await host(["machine", "destroy", id, "--app", "nr-probe", "--force"]);
+	const after = z
+		.array(z.object({ id: z.string(), state: z.string() }))
+		.parse(JSON.parse(await host(["machine", "list", "--app", "nr-probe", "--json"])));
+	if (after.some((machine) => machine.id === id && machine.state !== "destroyed"))
+		throw new Error("Probe termination is unconfirmed; keep full reservation");
+}
+
 export async function probe(
 	sandbox: Sandbox,
 	raw: ProbeInput,
 	host: HostExec,
-	charge: () => Promise<(status: "started" | "terminated", id: string) => Promise<void>>,
+	charge: () => Promise<{ name: string; update: (status: "started" | "terminated", id: string) => Promise<void> }>,
+	cleanupHost: HostExec = host,
 ) {
 	const input = z
 		.strictObject({
 			connector: z.string().regex(/^[a-z0-9_]+$/),
 			head: z.string().regex(/^[a-f0-9]{40}$/),
 			goVersion: z.string().regex(/^1\.\d+\.\d+$/),
+			control: Control,
 			session: z.string().optional(),
 			proxies: z.string().optional(),
 		})
 		.parse(raw);
-	const build = await sandbox.exec(
-		"cd apps/identity && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/factory-probe ./cmd/probe && tar -czf /tmp/factory-probe-source.tgz go.mod go.sum cmd contracts internal",
-		{ asRunner: true, timeoutMs: 600000 },
-	);
+	const build = await sandbox.exec("cd apps/identity && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/factory-probe ./cmd/probe", {
+		asRunner: true,
+		timeoutMs: 600000,
+	});
 	if (build.exitCode !== 0) throw new Error("Candidate probe build failed");
 	const binary = await sandbox.download("/tmp/factory-probe");
-	const source = await sandbox.download("/tmp/factory-probe-source.tgz");
-	if (binary.length > 100000000 || source.length > 100000000) throw new Error("Probe payload exceeds limit");
+	if (binary.length > 100000000) throw new Error("Probe payload exceeds limit");
 	const dir = await mkdtemp(join(tmpdir(), "nr-tmp-probe-"));
 	let machine: string | undefined;
 	let charged: Awaited<ReturnType<typeof charge>> | undefined;
 	try {
 		await writeFile(join(dir, "probe"), binary, { mode: 0o600 });
-		await writeFile(join(dir, "source.tgz"), source, { mode: 0o600 });
+		await writeFile(join(dir, "network-supervisor.py"), await reviewedSupervisor(), {
+			mode: 0o600,
+		});
 		const files: string[] = [];
-		const args = ["-connector", input.connector, "-test", "-trials", "5"];
+
 		for (const [key, value] of [
 			["session", input.session],
 			["proxies", input.proxies],
@@ -68,9 +89,9 @@ export async function probe(
 			if (value !== undefined) {
 				await writeFile(join(dir, key), value, { mode: 0o600 });
 				files.push("--file-local", `/secrets/${key}=${join(dir, key)}`);
-				args.push(`-${key}`, `/secrets/${key}`);
 			}
 		}
+
 		const listed = z.array(z.object({ state: z.string() })).parse(JSON.parse(await host(["machine", "list", "--app", "nr-probe", "--json"])));
 		if (listed.filter((m) => !["stopped", "destroyed", "destroying"].includes(m.state)).length >= 8)
 			throw new Error("Fly probe capacity unavailable");
@@ -84,7 +105,10 @@ export async function probe(
 			"--region",
 			"iad",
 			"--name",
-			`nr-tmp-${input.connector.slice(0, 20)}-${Date.now()}`,
+			z
+				.string()
+				.regex(/^nr-tmp-[a-z0-9-]{1,55}$/)
+				.parse(charged.name),
 			"--restart",
 			"no",
 			"--rm",
@@ -102,12 +126,11 @@ export async function probe(
 		]);
 		machine = /Machine ID:\s*([a-f0-9]+)/.exec(created)?.[1];
 		if (!machine) throw new Error("Fly returned no machine id");
-		await charged("started", machine);
+		await charged.update("started", machine);
 		await host(["machine", "wait", machine, "--app", "nr-probe", "--state", "started", "--wait-timeout", "2m"]);
-		for (const name of ["probe", "source.tgz"])
+		for (const name of ["probe", "network-supervisor.py"])
 			await host(["ssh", "sftp", "put", join(dir, name), `/root/${name}`, "--app", "nr-probe", "--machine", machine]);
-		const command = `mkdir -p /work /secrets && cp /root/probe /work/probe && cp /root/source.tgz /work/source.tgz && chmod 755 /work/probe && chown -R 65534:65534 /work /secrets && setpriv --reuid=65534 --regid=65534 --clear-groups --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all -- sh -c "cd /work && tar -xzf source.tgz && NR_SIGNUP_BUILD_VERSION=${input.head} ./probe ${args.join(" ")}"`;
-		const output = await host([
+		await host([
 			"ssh",
 			"console",
 			"--app",
@@ -115,32 +138,52 @@ export async function probe(
 			"--machine",
 			machine,
 			"-C",
-			`sh -c '${command}; code=$?; printf "\\nNRPROBE_STATUS %s\\n" "$code"'`,
+			"sh -c 'command -v python3 >/dev/null && mkdir -p /work /secrets && cp /root/probe /work/probe && chmod 755 /work/probe && chown -R 65534:65534 /work /secrets && chmod 700 /root && chmod 400 /root/network-supervisor.py && python3 -I /root/network-supervisor.py init --bytes 67108864 >/dev/null'",
 		]);
-		const result = parseProbe(output, input.connector);
+		const result = await assertProbe(input.control, async (value, network) => {
+			const request = {
+				argv: ["/work/probe", "lookup", input.connector],
+				cwd: "/work",
+				uid: 65534,
+				gid: 65534,
+				seconds: 35,
+				env: { PATH: "/usr/bin:/bin", HOME: "/work", NR_SIGNUP_BUILD_VERSION: input.head },
+				stdin: JSON.stringify({
+					by: input.control.known.By,
+					value,
+					session: input.session === undefined ? "" : "/secrets/session",
+					proxies: input.proxies === undefined ? "" : "/secrets/proxies",
+				}),
+			};
+			await writeFile(join(dir, "exec.json"), JSON.stringify(request), { mode: 0o600 });
+			await host(["ssh", "sftp", "put", join(dir, "exec.json"), "/root/exec.json", "--app", "nr-probe", "--machine", machine as string]);
+			const started = performance.now();
+			const output = await host([
+				"ssh",
+				"console",
+				"--app",
+				"nr-probe",
+				"--machine",
+				machine as string,
+				"-C",
+				`sh -c 'chmod 400 /root/exec.json && ${network ? "" : "unshare --net "}python3 -I /root/network-supervisor.py exec </root/exec.json; code=$?; printf "\\nNRPROBE_STATUS %s\\n" "$code"'`,
+			]);
+			const match = /\nNRPROBE_STATUS (\d+)\s*$/.exec(output);
+			if (match?.[1] !== "0") throw new Error("Candidate RPC has no successful supervisor exit");
+			return { output: JSON.parse(output.slice(0, match.index)), elapsedMs: performance.now() - started };
+		});
 		return { head: input.head, region: "iad", binary_sha256: createHash("sha256").update(binary).digest("hex"), result };
+	} catch (error) {
+		if (error instanceof FactoryFailure) throw error;
+		throw new FactoryFailure("probe", { status: "fail", head: input.head, region: "iad", stage: "build_dispatch_or_validation" });
 	} finally {
 		try {
 			if (machine) {
-				await host(["machine", "destroy", machine, "--app", "nr-probe", "--force"]);
-				await charged?.("terminated", machine);
+				await terminateProbe(cleanupHost, machine);
+				await charged?.update("terminated", machine);
 			}
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
 	}
-}
-
-export function parseProbe(output: string, connector: string) {
-	const match = /\nNRPROBE_STATUS (\d+)\s*$/.exec(output);
-	if (match?.[1] !== "0") throw new Error("Probe returned no successful remote exit");
-	const result = z
-		.object({
-			connector: z.literal(connector),
-			control: z.object({ verdict: z.literal("passed") }),
-			admission: z.object({ passes: z.literal(true) }),
-			tests: z.object({ pass: z.number().int().positive(), fail: z.literal(0), exit: z.literal(0), skip: z.number().int().nonnegative() }),
-		})
-		.parse(JSON.parse(output.slice(0, match.index)));
-	return result;
 }

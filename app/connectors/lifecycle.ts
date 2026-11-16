@@ -16,6 +16,7 @@ export interface LifecyclePorts {
 	implement(reason?: string): Promise<Candidate>;
 	verify(candidate: Candidate): Promise<Review>;
 	ready(candidate: Candidate): Promise<{ number: number; url: string }>;
+	disarm(pr: number): Promise<void>;
 	autoMerge(pr: number, head: string): Promise<void>;
 	pull(pr: number): Promise<PullState>;
 	production(merge: string): Promise<{ status: "pending" | "failed" | "passed"; sha: string; evidence: string[] }>;
@@ -33,6 +34,7 @@ export async function advance(claim: Claimed, ports: LifecyclePorts, repairRound
 		return "blocked" as const;
 	};
 	if (["research", "implementation", "review"].includes(claim.state.phase)) {
+		if (claim.state.candidate_pr) await ports.disarm(claim.state.candidate_pr);
 		let reason: string | undefined = claim.state.repair_reason ?? undefined;
 		let accepted: Candidate | undefined;
 		for (let round = 0; round <= repairRounds; round++) {
@@ -45,6 +47,7 @@ export async function advance(claim: Claimed, ports: LifecyclePorts, repairRound
 				break;
 			}
 			reason = review.reason || "Independent verification did not prove this head";
+			await checkpoint({ repair_reason: reason });
 		}
 		if (!accepted) return block(reason ?? "Verification failed");
 		const pr = await ports.ready(accepted);
@@ -58,6 +61,7 @@ export async function advance(claim: Claimed, ports: LifecyclePorts, repairRound
 			return "waiting";
 		}
 		if (pull.kind === "repair") {
+			await ports.disarm(claim.state.candidate_pr);
 			await checkpoint({ phase: "implementation", repair_reason: pull.reason });
 			return "waiting";
 		}

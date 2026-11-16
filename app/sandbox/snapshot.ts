@@ -14,6 +14,7 @@ import { bundleRunner } from "../runner/bundle.js";
 import { type SandboxApi, type SandboxClient, TRANSIENT } from "./client.js";
 import { builderEgress, egressHint } from "./egress.js";
 import { errorMessage, log, SAFE_REF, shq } from "./shell.js";
+import { initializeSupervision } from "./supervision.js";
 import { APP_DIR, REPO_DIR, RUN_AS, SANDBOX_ROOT, SCRATCH_DIR, type SnapshotManifest } from "./types.js";
 import { verifySandbox } from "./verify.js";
 
@@ -65,7 +66,7 @@ export function readToken(repo: RepoContext): Promise<string> {
 
 /** Runs a command as the runner user from REPO_DIR (as-runner.sh), with each argument quoted. */
 export function asRunner(...argv: string[]): string {
-	return `bash ${APP_DIR}/as-runner.sh ${argv.map(shq).join(" ")}`;
+	return `bash ${APP_DIR}/as-runner.sh ${config.connectors ? "--supervised " : ""}${argv.map(shq).join(" ")}`;
 }
 
 /** The credential helper that answers git from a staged `<dir>/<host>` file; the token is never in argv or config. */
@@ -124,6 +125,7 @@ export async function buildSnapshot(client: SandboxClient, repo: RepoContext, sh
 		await client.check(id, createRunnerUserCommand(), boot);
 		await client.upload(id, `${APP_DIR}/env`, envFileContent(node));
 		await client.upload(id, `${APP_DIR}/gitconfig`, SANDBOX_GITCONFIG);
+		if (config.connectors) await initializeSupervision(client, id);
 		// The self-test executes third-party code (the bundled packages); the token arrives only after it passes.
 		await client.check(
 			id,

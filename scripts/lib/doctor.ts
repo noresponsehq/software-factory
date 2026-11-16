@@ -2,7 +2,7 @@
 import { z } from "zod";
 import type { Agent } from "../../app/agents/define.js";
 import { AGENTS } from "../../app/agents/registry.js";
-import { TASKS } from "../../app/config/index.js";
+import { config, TASKS } from "../../app/config/index.js";
 import { appCredentialsFrom, type Env, GitHubApp, type ScriptDeps, splitRepo } from "./github.js";
 import { PLACEHOLDER_WEBHOOK_URL } from "./manifest.js";
 import { errorMessage, type Reporter } from "./output.js";
@@ -26,7 +26,14 @@ export async function runDoctor(opts: DoctorOptions, out: Reporter): Promise<num
 	out.addSecrets(...SECRET_ENV.map((name) => env[name]), ...agents.map((agent) => env[agent.harness.credential]));
 
 	checkEnv(opts, out);
-	if (opts.services.includes("workflows")) checkHarnesses(env, agents, out);
+	if (opts.services.includes("workflows")) {
+		if (config.connectors && !opts.agents) {
+			out.addSecrets(env.CLAUDE_CODE_OAUTH_TOKEN);
+			if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) out.pass("Claude subscription credential configured; no API fallback");
+			else out.fail("CLAUDE_CODE_OAUTH_TOKEN is missing", "Use the existing Claude Max subscription credential in the main checkout credential file");
+			await checkConnectorServices(opts, out);
+		} else checkHarnesses(env, agents, out);
+	}
 	await checkGitHub(opts, out);
 	await checkTasks(opts, out);
 	return out.summary();
@@ -49,7 +56,7 @@ function checkEnv({ env, services }: DoctorOptions, out: Reporter): void {
 function setFix(service: Service, name: string): string {
 	const group = envGroupFor(service, name);
 	if (!group) return `Set it on factory-${service} (render.yaml declares it)`;
-	return `Set it in the ${group.name} env group: add it to .env and run \`npm run setup:render\``;
+	return `Set it in the ${group.name} env group: add it to the main checkout credential file and run \`npm run setup:render\``;
 }
 
 /** Each harness the agents use, the agents on it, and whether its key is set. */
@@ -101,7 +108,7 @@ async function checkGitHub(opts: DoctorOptions, out: Reporter): Promise<void> {
 	}
 	const perms = missingPermissions(info.permissions);
 	if (perms.length) out.fail(`App lacks permissions: ${perms.join(", ")}`, `Add them in ${appSettingsUrl(info, app.apiUrl)}`);
-	else out.pass("App permissions cover contents, issues, pull_requests (write) and metadata (read)");
+	else out.pass("App permissions cover all configured factory endpoints");
 	const events = missingEvents(info.events);
 	if (events.length) out.fail(`App isn't subscribed to: ${events.join(", ")}`, `Subscribe in ${appSettingsUrl(info, app.apiUrl)}`);
 	else out.pass("App subscribes to issues, issue_comment, pull_request, push");
@@ -240,7 +247,10 @@ async function checkTasks(opts: DoctorOptions, out: Reporter): Promise<void> {
 	}
 	const result = taskRows.safeParse(await response.json().catch(() => undefined));
 	if (!result.success) {
-		out.fail("task registration is unverified: Render returned an invalid task list", "Retry doctor; if this persists, check the Render API response schema");
+		out.fail(
+			"task registration is unverified: Render returned an invalid task list",
+			"Retry doctor; if this persists, check the Render API response schema",
+		);
 		return;
 	}
 	const found = new Set(result.data.map((row) => row.task.name));
@@ -260,4 +270,43 @@ function safeUrl(value: string): URL | null {
 	} catch {
 		return null;
 	}
+}
+
+async function checkConnectorServices(opts: DoctorOptions, out: Reporter) {
+	const request = opts.fetch ?? fetch;
+	const checks = [
+		{
+			name: "Ledger operator cursor",
+			url: `${opts.env.NR_LEDGER_URL?.replace(/\/$/, "")}/ledger/factory/cursor`,
+			token: opts.env.NR_FACTORY_OPERATOR_TOKEN,
+			body: undefined,
+		},
+		{ name: "Linear viewer", url: "https://api.linear.app/graphql", token: opts.env.LINEAR_API_KEY, body: JSON.stringify({ query: "{viewer{id}}" }) },
+		{ name: "Fly probe machine access", url: "https://api.machines.dev/v1/apps/nr-probe/machines", token: opts.env.FLY_API_TOKEN, body: undefined },
+	];
+	for (const check of checks) {
+		if (!check.token) continue;
+		try {
+			if (new URL(check.url).protocol !== "https:") throw new Error("HTTPS required");
+			const response = await request(check.url, {
+				method: check.body ? "POST" : "GET",
+				body: check.body,
+				headers: { Authorization: check.name === "Linear viewer" ? check.token : `Bearer ${check.token}`, "Content-Type": "application/json" },
+				redirect: "error",
+				signal: AbortSignal.timeout(15000),
+			});
+			const data: unknown = await response.json();
+			if (!response.ok || (typeof data === "object" && data !== null && "errors" in data)) throw new Error("Authorization or schema failed");
+			if (check.name === "Ledger operator cursor") z.object({ after: z.number().int().nonnegative() }).parse(data);
+			if (check.name === "Fly probe machine access") z.array(z.object({ id: z.string() })).parse(data);
+			if (check.name === "Linear viewer") z.object({ data: z.object({ viewer: z.object({ id: z.string() }) }) }).parse(data);
+			out.pass(`${check.name} authenticated`);
+		} catch {
+			out.fail(`${check.name} remains unverified`, "Check the configured service credential and deployed protocol; no secret values were logged");
+		}
+	}
+	out.warn(
+		"Claude execution and full billed traffic limits remain unverified",
+		"Run the reserved connector smoke after independent supervisor review and billing admission",
+	);
 }

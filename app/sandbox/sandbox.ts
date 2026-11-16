@@ -20,6 +20,7 @@ import {
 	type SnapshotDeps,
 	snapshotName,
 } from "./snapshot.js";
+import { initializeSupervision } from "./supervision.js";
 import { APP_DIR, type OpenedSandbox, REPO_DIR, RUN_AS, type Sandbox, type SandboxRef, SCRATCH_DIR, type SnapshotManifest } from "./types.js";
 import { verifySandbox } from "./verify.js";
 
@@ -76,6 +77,7 @@ export async function openSandbox(repo: RepoContext, ref: SandboxRef, deps: Open
 	try {
 		await client.waitRunning(id);
 		await ensureRunnerPayload(client, id);
+		if (config.connectors) await initializeSupervision(client, id);
 		const info = await verifySandbox(client, id);
 		// verify.sh can only probe /proc as root; a sandbox where it couldn't check never gets a model key.
 		if (!info.runnerNonDumpable) throw new Error(`could not confirm the runner is non-dumpable in ${id}`);

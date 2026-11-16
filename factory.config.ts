@@ -14,7 +14,7 @@ export interface RepoConfig {
 }
 
 export interface FactoryConfig {
-	connectors?: { marker: string; dailyUsd: number; concurrency: number; reserveUsd: number; toolAllowanceUsd: number };
+	connectors?: { marker: string; dailyUsd: number; reserveUsd: number; toolAllowanceUsd: number };
 	/** Repositories the factory acts on, keyed by "owner/name". Webhooks from any other repository are ignored. */
 	repos: Record<string, RepoConfig>;
 	labels: { triage: string; specApproved: string; prReview: string; autopilot: string };
@@ -41,7 +41,7 @@ export function defineFactoryConfig(config: FactoryConfig): FactoryConfig {
 }
 
 export default defineFactoryConfig({
-	connectors: { marker: "factory:connector", dailyUsd: 50, concurrency: 2, reserveUsd: 5, toolAllowanceUsd: 0.5 },
+	connectors: { marker: "factory:connector", dailyUsd: 50, reserveUsd: 5, toolAllowanceUsd: 0.5 },
 	repos: {
 		"noresponsehq/noresponse": {
 			baseBranch: "main",

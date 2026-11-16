@@ -4,12 +4,13 @@ import { z } from "zod";
 export const Phase = z.enum(["research", "implementation", "review", "ci", "release", "production_verified"]);
 export const Resource = z.strictObject({
 	key: z.string().min(1),
-	kind: z.string().min(1),
+	kind: z.string().regex(/^[a-z_]{1,32}$/),
 	reserved_usd: z.number().nonnegative(),
 	status: z.enum(["reserved", "started", "terminated"]),
 	resource_id: z.string().nullable().optional(),
 });
 export const State = z.object({
+	cleanup_only: z.boolean().default(false),
 	resource_charges: z.array(Resource).default([]),
 	repair_reason: z.string().nullable().optional(),
 	version: z.number().int().nonnegative(),
@@ -49,7 +50,11 @@ export const Claimed = z.object({
 	state: State,
 });
 export type Claimed = z.infer<typeof Claimed>;
-export const ClaimResult = z.union([Claimed, z.object({ status: z.enum(["blocked", "failed", "completed"]), reason: z.string().optional() })]);
+export const RunEnvelope = Claimed.extend({ token: z.string().min(1).optional() });
+export const ClaimResult = z.union([
+	RunEnvelope.extend({ fresh: z.boolean() }),
+	z.object({ status: z.enum(["blocked", "failed", "completed"]), reason: z.string().optional() }),
+]);
 
 export class Ledger {
 	constructor(
@@ -69,12 +74,21 @@ export class Ledger {
 		});
 		if (!response.ok && !(path === "claim" && response.status === 409))
 			throw new Error(`Factory ledger ${path.split("?")[0]} returned ${response.status}`);
-		return response.json();
+		const result: unknown = await response.json();
+		return path === "claim" && typeof result === "object" && result !== null ? { ...result, fresh: response.status === 201 } : result;
 	}
 	async claim(input: z.infer<typeof ClaimInput>) {
 		return ClaimResult.parse(await this.call("claim", ClaimInput.parse(input)));
 	}
-	async heartbeat(claim: Claimed, lease_seconds: number, patch: Partial<Omit<State, "version">> = {}) {
+	async own(result: z.infer<typeof ClaimResult>, leaseSeconds: number): Promise<Claimed | null> {
+		if (result.status !== "claimed") return null;
+		if (!result.fresh && new Date(result.expires_at).getTime() > Date.now()) return null;
+		const claim = Claimed.parse(result);
+		if (!result.fresh) await this.heartbeat(claim, leaseSeconds, {}, true);
+		return claim;
+	}
+
+	async heartbeat(claim: Claimed, lease_seconds: number, patch: Partial<Omit<State, "version">> = {}, recover = false) {
 		const result = z
 			.object({
 				status: z.literal("claimed"),
@@ -84,7 +98,14 @@ export class Ledger {
 				token: z.string().min(1).optional(),
 			})
 			.parse(
-				await this.call("heartbeat", { run_id: claim.run_id, token: claim.token, expected_version: claim.state.version, lease_seconds, ...patch }),
+				await this.call("heartbeat", {
+					run_id: claim.run_id,
+					token: claim.token,
+					expected_version: claim.state.version,
+					lease_seconds,
+					recover,
+					...patch,
+				}),
 			);
 		if (result.run_id !== claim.run_id) throw new Error("Factory lease changed owner");
 		Object.assign(claim, result);

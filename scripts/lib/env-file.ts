@@ -1,4 +1,5 @@
 import { chmod, readFile, writeFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 
 /**
  * Sets each key in dotenv text: replaces an existing `KEY=` line (the first, commented-out lines untouched) or
@@ -26,4 +27,10 @@ export async function writeEnvFile(path: string, values: Readonly<Record<string,
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
 	await writeFile(path, upsertEnv(current, values), { mode: 0o600 });
+}
+
+export const MAIN_CREDENTIAL_FILE = "/Users/harryjohnston/projects/noresponse/.env";
+export function credentialPath(path = MAIN_CREDENTIAL_FILE) {
+	if (!isAbsolute(path)) throw new Error("--credential-file must be absolute; use the main checkout credential file");
+	return path;
 }

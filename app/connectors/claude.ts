@@ -5,6 +5,7 @@ import { type Sandbox, shq } from "../sandbox/index.js";
 
 export const AgentResult = z.strictObject({
 	status: z.enum(["implemented", "verified", "blocked"]),
+	addressed_threads: z.array(z.string().min(1).max(256)).max(100).default([]),
 	summary: z.string().min(1).max(10000),
 	evidence: z.array(z.string().min(1).max(500)).max(100),
 });

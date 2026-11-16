@@ -10,7 +10,10 @@ vi.mock("../app/config/index.js", () => ({
 		labels: { triage: "factory:triage", specApproved: "factory:spec-approved", prReview: "factory:pr-review", autopilot: "factory:autopilot" },
 	},
 }));
-vi.mock("../scripts/lib/env-file.js", () => ({ writeEnvFile: vi.fn() }));
+vi.mock("../scripts/lib/env-file.js", async (original) => ({
+	...(await original<typeof import("../scripts/lib/env-file.js")>()),
+	writeEnvFile: vi.fn(),
+}));
 vi.mock("../scripts/lib/manifest.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../scripts/lib/manifest.js")>()),
 	startCallbackServer: async () => ({
@@ -44,14 +47,16 @@ describe("setup:app credential output", () => {
 		await import("../scripts/setup-app.js");
 
 		const [path, credentials] = vi.mocked(writeEnvFile).mock.calls[0];
-		expect(path).toBe(".env");
+		expect(path).toBe("/Users/harryjohnston/projects/noresponse/.env");
 		expect(credentials).toEqual({
 			GITHUB_APP_ID: "123",
 			GITHUB_APP_PRIVATE_KEY: Buffer.from("fake-private-key-do-not-print").toString("base64"),
 			GITHUB_WEBHOOK_SECRET: expect.stringMatching(/^[a-f0-9]{64}$/),
 		});
 		const output = log.mock.calls.flat().join("\n");
-		expect(output).toContain("Wrote GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, and GITHUB_WEBHOOK_SECRET to .env");
+		expect(output).toContain(
+			"Wrote GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, and GITHUB_WEBHOOK_SECRET to /Users/harryjohnston/projects/noresponse/.env",
+		);
 		expect(output).toContain("https://github.com/apps/sf-test/installations/new");
 		expect(output).not.toContain("fake-private-key-do-not-print");
 		expect(output).not.toContain(credentials.GITHUB_APP_PRIVATE_KEY);

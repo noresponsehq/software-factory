@@ -24,8 +24,10 @@ export class Linear {
 	async ensure(connector: string, condition: string, teamId: string, assigneeId: string) {
 		const hex = createHash("sha256").update(`factory:${connector}:${condition}`).digest("hex");
 		const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-		const existing = await this.query("query($id:String!){issue(id:$id){identifier}}", { id }).catch(() => undefined);
-		if (existing?.issue) return z.object({ identifier: z.string() }).parse(existing.issue).identifier;
+		const existing = z
+			.object({ issues: z.object({ nodes: z.array(z.object({ identifier: z.string() })) }) })
+			.parse(await this.query("query($id:ID!){issues(filter:{id:{eq:$id}},first:1){nodes{identifier}}}", { id }));
+		if (existing.issues.nodes[0]) return existing.issues.nodes[0].identifier;
 		const created = await this.query("mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{identifier}}}", {
 			input: {
 				id,

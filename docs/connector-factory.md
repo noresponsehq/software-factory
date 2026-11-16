@@ -12,7 +12,7 @@ GitHub marker / assigned Linear / D1 health
   ├─ Claude Code implementation in Render
   ├─ host validates and publishes candidate tree
   ├─ fresh Claude Code verification in another Render sandbox
-  ├─ immutable third sandbox builds the candidate probe
+  ├─ third sandbox pins main controls and builds lookup RPC
   ├─ trusted host runs the probe on Fly iad
   ├─ ready PR → expected-head auto-merge → CI repairs
   └─ release SHA + production search → Linear completion
@@ -60,7 +60,10 @@ Render SDK 1.8 exposes the current `render.sandboxes` client and explicit plans.
 Every phase transition is a versioned compare-and-set. Periodic renewal is
 serialized with evidence and resource writes. Loss of ownership stops tracked
 sandboxes. Expired claims rotate their guest token; the host retains the new one.
-Blockers remain in D1 until their condition changes, and needs_person is never
+Active replays omit the token and cannot own work. Expired recovery uses a server
+CAS before effects. Held runs carry `cleanup_only` and only terminate journalled
+resources and finish blocked. The shared health cursor advances only after durable
+dispatch, including filtered pages with no failing events. Blockers remain in D1 until their condition changes, and needs_person is never
 a prompt to keep retrying.
 
 The shared cap defaults to US$50 per UTC day in the ledger. `tool_allowance_usd`
@@ -88,10 +91,15 @@ checks retain receipts. Ledger production evidence must contain `status:pass`,
 positive checks, zero failed and zero skipped.
 
 The Fly adapter runs fixed host commands, never a script from the candidate on
-the host. Only the candidate binary, source archive and host-selected connector
-session/proxy files reach the machine. Remote exit status and the probe's
-connector, controls, admission and nonempty tests must all pass. Model output
-alone cannot satisfy this gate.
+the host. Only the candidate lookup binary and host-selected connector
+session/proxy files reach the machine. The candidate only returns lookup readings. Host-owned assertions compare them
+with controls exported from trusted main before any candidate code runs. An AST
+pin rejects changes to Known declarations and referenced constants. The host
+checks required fields, five positive/absent trials, end-to-end latency and a
+separate network namespace failure control. Guest pass/verdict JSON is rejected.
+Trusted main tests and independent Claude review remain additional gates.
+New connectors and supplied controls without a trusted approval source are
+blocked, a partial capability tracked by [NOR-1489](https://linear.app/noresponse/issue/NOR-1489/supply-approved-controls-to-autonomous-connector-probes).
 
 Production verification independently resolves and fetches the complete default
 branch revision. This pins the operator script, helpers, regression suite and
@@ -105,3 +113,8 @@ A partial search, rollback or missing evidence cannot close Linear.
 Claude subscription, sandbox image installation, network billing limits, Fly
 probing and complete deployment are separate checks and must be reported as
 unverified until exercised. Local passing tests do not claim those results.
+
+Supervisor execution remains disabled until independent acceptance supplies a
+reviewed digest. Tests passing locally do not override that gate. Baseline and
+storage accounting, complete network billing admission and live lifecycle proof
+remain incomplete; no paid lifecycle is enabled by this implementation snapshot.

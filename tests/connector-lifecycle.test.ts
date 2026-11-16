@@ -10,13 +10,14 @@ function setup() {
 		run_id: "r1",
 		token: "run-token",
 		expires_at: "later",
-		state: { phase: "research", version: 0, resource_charges: [], evidence_ids: [] },
+		state: { cleanup_only: false, phase: "research", version: 0, resource_charges: [], evidence_ids: [] },
 	};
 	const ports: LifecyclePorts = {
 		checkpoint: vi.fn(async () => {}),
 		implement: vi.fn(async () => ({ head, evidence: ["implementation"] })),
 		verify: vi.fn(async () => ({ passed: true, head, evidence: ["fresh-verifier"], reason: "" })),
 		ready: vi.fn(async () => ({ number: 1, url: "https://github.com/o/r/pull/1" })),
+		disarm: vi.fn(async () => {}),
 		autoMerge: vi.fn(async () => {}),
 		pull: vi.fn(async () => ({ kind: "pending" as const })),
 		production: vi.fn(async () => ({ status: "passed" as const, sha: merge, evidence: ["release", "search"] })),
@@ -59,7 +60,7 @@ describe("connector lifecycle", () => {
 	});
 	it.each(["failed", "pending", "wrong_sha", "no_evidence"])("never closes on %s release", async (failure) => {
 		const { claim, ports } = setup();
-		claim.state = { phase: "release", version: 4, merge_sha: merge, resource_charges: [], evidence_ids: [] };
+		claim.state = { cleanup_only: false, phase: "release", version: 4, merge_sha: merge, resource_charges: [], evidence_ids: [] };
 		vi.mocked(ports.production).mockResolvedValue({
 			status: failure === "pending" ? "pending" : failure === "failed" ? "failed" : "passed",
 			sha: failure === "wrong_sha" ? head : merge,
@@ -68,6 +69,26 @@ describe("connector lifecycle", () => {
 		expect(await advance(claim, ports, 0)).toBe(failure === "pending" ? "waiting" : "blocked");
 		expect(ports.closeLinear).not.toHaveBeenCalled();
 	});
+	it("disarms auto-merge before persisting repair and before updating a repaired branch", async () => {
+		const { claim, ports } = setup();
+		await advance(claim, ports, 0);
+		const order: string[] = [];
+		vi.mocked(ports.pull).mockResolvedValue({ kind: "repair", reason: "red CI" });
+		vi.mocked(ports.disarm).mockImplementation(async () => {
+			order.push("disarm");
+		});
+		vi.mocked(ports.checkpoint).mockImplementation(async () => {
+			order.push("checkpoint");
+		});
+		await advance(claim, ports, 0);
+		expect(order).toEqual(["disarm", "checkpoint"]);
+		expect(claim.state.repair_reason).toBe("red CI");
+		vi.mocked(ports.disarm).mockRejectedValue(new Error("disarm failed"));
+		vi.mocked(ports.implement).mockClear();
+		await expect(advance(claim, ports, 0)).rejects.toThrow("disarm failed");
+		expect(ports.implement).not.toHaveBeenCalled();
+	});
+
 	it("stops before work when checkpoint loses its lease", async () => {
 		const { claim, ports } = setup();
 		vi.mocked(ports.checkpoint).mockRejectedValue(new Error("lease conflict"));

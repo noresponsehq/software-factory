@@ -16,6 +16,7 @@ export const REQUIRED_PERMISSIONS: Readonly<Record<string, "read" | "write">> = 
 	issues: "write",
 	pull_requests: "write",
 	metadata: "read",
+	...(config.connectors ? { actions: "read" as const, checks: "read" as const } : {}),
 };
 
 /** Webhook events the gateway routes (app/gateway/routes.ts). */
@@ -32,6 +33,9 @@ export interface LabelSpec {
 }
 
 export const LABELS: readonly LabelSpec[] = [
+	...(config.connectors
+		? [{ name: config.connectors.marker, color: "0e8a16", description: "Run the autonomous connector lifecycle", trigger: true }]
+		: []),
 	{
 		name: config.labels.triage,
 		color: "1d76db",
