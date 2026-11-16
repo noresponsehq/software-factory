@@ -32,13 +32,22 @@ export interface HookConfig {
 }
 
 const hookDelivery = z.object({
-	id: z.number().int().positive(),
+	id: z.string().regex(/^[1-9]\d{0,19}$/),
 	delivered_at: z.iso.datetime(),
 	status_code: z.number().int().min(0).max(599),
 	event: z.string().min(1).max(100),
 });
 
 export type HookDelivery = z.infer<typeof hookDelivery>;
+
+/** GitHub delivery ids exceed Number.MAX_SAFE_INTEGER, so they are read as strings before JSON.parse rounds them. */
+function deliveryJson(text: string): unknown {
+	try {
+		return JSON.parse(text.replace(/"(id|guid)":\s*(\d+)/g, '"$1":"$2"'));
+	} catch {
+		return undefined;
+	}
+}
 
 export interface Installation {
 	id: number;
@@ -101,15 +110,15 @@ export class GitHubApp {
 
 	/** The most recent deliveries, newest first. */
 	async recentDeliveries(perPage = 10): Promise<HookDelivery[]> {
-		const response = await this.http.json<unknown>("GET", "/app/hook/deliveries", { query: { per_page: perPage } });
+		const response = deliveryJson(await this.http.text("GET", "/app/hook/deliveries", { query: { per_page: perPage } }));
 		const result = z.array(hookDelivery).max(100).safeParse(response);
 		if (!result.success) throw new Error("GitHub returned an invalid webhook delivery list");
 		return result.data;
 	}
 
 	/** Only retain delivery metadata: request/response payloads can contain private repository content. */
-	async hookDelivery(id: number): Promise<HookDelivery & { url: string }> {
-		const response = await this.http.json<unknown>("GET", `/app/hook/deliveries/${id}`);
+	async hookDelivery(id: string): Promise<HookDelivery & { url: string }> {
+		const response = deliveryJson(await this.http.text("GET", `/app/hook/deliveries/${id}`));
 		const result = hookDelivery.extend({ url: z.url() }).safeParse(response);
 		if (!result.success) throw new Error("GitHub returned invalid webhook delivery metadata");
 		return result.data;
