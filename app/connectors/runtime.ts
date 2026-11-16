@@ -213,9 +213,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 							const probeResult = await withSandbox(
 								() => open(repo.config.baseBranch),
 								async (frozen) => {
-									const source = await trustedBuild(frozen, gh.http, repo.fullName, candidate.head, input.connector);
+									const source = await trustedBuild(frozen, gh.http, repo.fullName, candidate.head, input.connector, (id) => ledger.controls(id));
 									const trustedChecks = await runVerify(frozen, [
-										`cd apps/identity && go test -count=1 ./internal/connectors/${input.connector} ./internal/connector/...`,
+										`cd apps/identity && go test -count=1 ${source.scope.packages.map((p) => `./${p.slice("apps/identity/".length)}`).join(" ")} ./internal/connector/...`,
 									]);
 									if (!trustedChecks.length || trustedChecks.some((c) => !c.passed))
 										throw new FactoryFailure("verification", { status: "fail", reason: "trusted_main_tests", head: candidate.head });
@@ -224,11 +224,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 									const result = await probe(
 										frozen,
 										{
-											connector: input.connector,
 											head: candidate.head,
 											goVersion: go.stdout.trim(),
-											control: source.control,
-											session: process.env[`NR_PROBE_SESSION_${input.connector.toUpperCase()}`],
+											targets: source.targets.map((t) => ({ ...t, session: process.env[`NR_PROBE_SESSION_${t.connector.toUpperCase()}`] })),
 											proxies: process.env.NR_PROBE_PROXIES_RESIDENTIAL,
 										},
 										flyExec(requireEnv("FACTORY_FLY_API_TOKEN"), lease.signal),
@@ -241,8 +239,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 										},
 										flyExec(requireEnv("FACTORY_FLY_API_TOKEN")),
 									);
-									const { control: _control, ...binding } = source;
-									return { ...result, source: binding };
+									const { targets, ...binding } = source;
+									const selected = targets.map((t) => t.connector);
+									return { ...result, source: { ...binding, selected } };
 								},
 							);
 							const receipt = await evidence(candidate.head, "probe", {
