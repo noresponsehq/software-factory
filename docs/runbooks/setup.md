@@ -33,6 +33,13 @@ subscription authentication without printing credential values.
 
 ## GitHub App and Render configuration
 
+Before opening the fork's first PR, open its Actions page and enable the inherited
+workflows. GitHub can report Actions enabled through the API while still disabling
+workflows inherited by a fork. Confirm `CI` appears in the workflow list. Require
+the `check` job and resolved review threads on `main`, including for administrators,
+and enable repository auto-merge. Without a required check, `gh pr merge --auto`
+can merge immediately. Verify an actual CI run passes before deployment.
+
 Reuse an existing correctly scoped App when available. Otherwise run
 `npm run setup:app -- --org noresponsehq`. Complete GitHub's manifest flow and
 install the App on the configured repository. The command writes only its three
