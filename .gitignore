@@ -4,3 +4,4 @@ node_modules
 .env.localdev
 tmp/
 .DS_Store
+benchmark-results/
