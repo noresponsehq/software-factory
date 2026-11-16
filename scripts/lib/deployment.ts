@@ -110,10 +110,15 @@ export async function checkDeployment(opts: DeploymentOptions, out: Reporter): P
 			const deploys = ((await render(`services/${service.id}/deploys?limit=20`, rows("deploy", Deploy))) ?? []).map((row) => row.deploy);
 			const live = deploys.find((d) => d.status === "live");
 			if (!live) out.fail(`${name} has no live deploy`, `Deploy commit ${revision}`);
-			else if (live.commit?.id !== revision)
-				out.fail(`${name} runs ${live.commit?.id?.slice(0, 7) ?? "an unknown commit"}, not ${short}`, `Deploy commit ${revision}`);
-			else out.pass(`${name} runs ${short} (${live.id})`);
-			if (service.suspended === "suspended") out.warn(`${name} is suspended`, "Resume it when the factory should take work");
+			else if (live.commit?.id === revision) out.pass(`${name} runs ${short} (${live.id})`);
+			else if (service.suspended === "suspended") {
+				out.warn(
+					`${name} is suspended on ${live.commit?.id?.slice(0, 7) ?? "an unknown commit"}, not ${short}`,
+					`Deploy commit ${revision} before resuming it`,
+				);
+			} else out.fail(`${name} runs ${live.commit?.id?.slice(0, 7) ?? "an unknown commit"}, not ${short}`, `Deploy commit ${revision}`);
+			if (service.suspended === "suspended")
+				out.warn(`${name} is suspended and dispatches nothing`, "Resume it only when the factory should take work");
 		} catch (error) {
 			out.fail(`service ${name} is unverified: ${errorMessage(error)}`);
 		}
