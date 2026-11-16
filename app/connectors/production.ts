@@ -6,7 +6,8 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { type RepoContext, requireEnv } from "../config/index.js";
 import { type GitHubHttp, gitData, githubToken } from "../github/index.js";
-import { AcceptanceRecipe, proofFailure, proveRelease, recipePath } from "./acceptance.js";
+import { AcceptanceRecipe, proofFailure, proveRelease, recipePath, resolveFixture } from "./acceptance.js";
+import { Ledger } from "./ledger.js";
 import { type Assertion, type FailureClass, sha256, uploadArtifacts, type VerificationBundle } from "./bundle.js";
 import { FactoryFailure } from "./failure.js";
 import { productionFailure } from "./production-evidence.js";
@@ -232,13 +233,12 @@ async function publicJson(path: string, init: { method?: string; body?: unknown 
 	return response.status === 204 ? null : response.json();
 }
 
-export async function groupPersonLookup(recipe: AcceptanceRecipe, sleep: (ms: number) => Promise<void>) {
-	const fixture = recipe.fixtures.find((f) => f.ref === recipe.operation.fixture);
-	if (!fixture?.value) throw proofFailure("fixture_unresolved", { fixture: recipe.operation.fixture });
-	const identity =
-		fixture.identifier === "username"
-			? { handles: [{ platform: fixture.platform ?? recipe.connector, handle: fixture.value }] }
-			: { [fixture.identifier]: fixture.value };
+export async function groupPersonLookup(
+	recipe: AcceptanceRecipe,
+	sleep: (ms: number) => Promise<void>,
+	readControls: (connector: string) => Promise<unknown> = (id) => new Ledger(requireEnv("NR_LEDGER_URL"), requireEnv("NR_FACTORY_OPERATOR_TOKEN")).controls(id),
+) {
+	const identity = await resolveFixture(recipe, readControls);
 	const group = z
 		.object({ id: z.string() })
 		.parse(await publicJson("/v1/groups", { method: "POST", body: { name: `nr-tmp-proof-${recipe.connector}` } }));
@@ -267,6 +267,9 @@ export async function productionVerify(
 	signal?: AbortSignal,
 ) {
 	const recipe = await readRecipe(http, repo.fullName, merge, connector);
+	const fixture = recipe.fixtures.find((f) => f.ref === recipe.operation.fixture);
+	const control = fixture && "control" in fixture ? fixture.control : undefined;
+	const requiredRevision = Math.max(recipe.observe.ledger_revision, control?.rev ?? 0);
 	const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 	const version = async () =>
 		z.object({ build_version: z.string() }).parse(await (await fetch(`${api}/version`, { signal: AbortSignal.timeout(30000) })).json()).build_version;
@@ -282,7 +285,7 @@ export async function productionVerify(
 		);
 		return { api: apiRev.success ? apiRev.data.ledger.rev : null, worker: worker?.success ? worker.data.ledger.rev : null };
 	};
-	const proof = await proveRelease(merge, recipe, {
+	const proof = await proveRelease(merge, { ...recipe, observe: { ledger_revision: requiredRevision } }, {
 		version,
 		contains: (older, newer) => contains(http, repo.fullName, older, newer),
 		revisions,
@@ -292,6 +295,7 @@ export async function productionVerify(
 	});
 	const bundle: VerificationBundle = {
 		...proof.bundle,
+		fixtures: [...proof.bundle.fixtures, ...(control ? [{ name: `control:${control.connector}:${control.variant}:${control.rev}`, sha256: sha256(JSON.stringify(control)) }] : [])],
 		acceptance_recipe_sha256: sha256(JSON.stringify(recipe)),
 		candidate_sha: merge,
 		observed_release_sha: proof.observed,

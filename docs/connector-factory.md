@@ -156,8 +156,15 @@ person through the public API, and passes only when the person's
 `lookup.records` hold a record from that connector with every expected field
 and no lookup check lists the connector as unanswered. Each failure is typed
 (`connector_not_executed`, `ledger_revision_not_observed`, `stale_build` and
-so on). Only public handle fixtures can be carried in a recipe; sealed email
-and phone controls answer `fixture_unresolved` until a resolver exists.
+so on). A recipe may carry a public username, or a control reference with
+`connector`, `variant` and exact `rev`. Email and phone values cannot appear in
+the recipe. The host resolves references through the operator control route
+immediately before the lookup, requiring the same connector, identifier kind,
+expected presence, revision, operator ownership and freshness. Missing, stale
+or replaced controls fail as `fixture_unresolved`. The required follower
+revision includes the pinned control revision. Evidence hashes the reference,
+never the decrypted identifier, and the resolved value is used only in the
+public API request.
 
 When a later merge B that contains A is released instead of A, or production
 moves from A to B during proof, the receipt records `release_state:
