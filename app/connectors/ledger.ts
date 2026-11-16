@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { EvidenceRefused } from "./bundle.js";
 import { TrustedControls } from "./trusted-controls.js";
 
 export const Phase = z.enum(["research", "implementation", "review", "ci", "release", "production_verified"]);
@@ -10,9 +11,9 @@ export const Resource = z.strictObject({
 	status: z.enum(["reserved", "started", "terminated"]),
 	resource_id: z.string().nullable().optional(),
 });
-export const State = z.object({
-	cleanup_only: z.boolean().default(false),
-	resource_charges: z.array(Resource).default([]),
+const Reported = z.object({
+	cleanup_only: z.boolean().optional(),
+	resource_charges: z.array(Resource).optional(),
 	repair_reason: z.string().nullable().optional(),
 	version: z.number().int().nonnegative(),
 	phase: Phase,
@@ -28,9 +29,18 @@ export const State = z.object({
 		.regex(/^[a-f0-9]{40}$/)
 		.nullable()
 		.optional(),
-	evidence_ids: z.array(z.string()).default([]),
+	evidence_ids: z.array(z.string()).optional(),
 });
+export const State = Reported.required({ cleanup_only: true, resource_charges: true, evidence_ids: true });
 export type State = z.infer<typeof State>;
+export function mergeState(known: State, reported: z.infer<typeof Reported>): State {
+	return {
+		...reported,
+		cleanup_only: reported.cleanup_only ?? known.cleanup_only,
+		resource_charges: reported.resource_charges ?? known.resource_charges,
+		evidence_ids: reported.evidence_ids ?? known.evidence_ids,
+	};
+}
 export const ClaimInput = z.strictObject({
 	event_id: z.string().min(1).max(256),
 	connector: z
@@ -77,6 +87,7 @@ export class Ledger {
 			signal: AbortSignal.timeout(30000),
 			redirect: "error",
 		});
+		if (path === "evidence" && (response.status === 400 || response.status === 422)) throw new EvidenceRefused("Factory ledger refused evidence");
 		if (!response.ok && !(path === "claim" && response.status === 409))
 			throw new Error(`Factory ledger ${path.split("?")[0]} returned ${response.status}`);
 		const result: unknown = await response.json();
@@ -99,7 +110,7 @@ export class Ledger {
 				status: z.literal("claimed"),
 				run_id: z.string(),
 				expires_at: Claimed.shape.expires_at,
-				state: State,
+				state: Reported,
 				token: z.string().min(1).optional(),
 			})
 			.parse(
@@ -113,7 +124,8 @@ export class Ledger {
 				}),
 			);
 		if (result.run_id !== claim.run_id) throw new Error("Factory lease changed owner");
-		Object.assign(claim, result);
+		const { state, ...envelope } = result;
+		Object.assign(claim, envelope, { state: mergeState(claim.state, state) });
 	}
 	async controls(connector: string) {
 		const response = await this.request(
@@ -140,7 +152,7 @@ export class Ledger {
 		const encoded = JSON.stringify(payload);
 		if (Buffer.byteLength(encoded) > 16384) throw new Error("Evidence exceeds 16 KiB");
 		const digest = createHash("sha256").update(encoded).digest("hex");
-		const result = z.object({ evidence_id: z.string().min(1), state: State }).parse(
+		const result = z.object({ evidence_id: z.string().min(1), state: Reported }).parse(
 			await this.call("evidence", {
 				run_id: claim.run_id,
 				token: claim.token,
@@ -151,7 +163,7 @@ export class Ledger {
 				payload,
 			}),
 		);
-		claim.state = result.state;
+		claim.state = mergeState(claim.state, result.state);
 		return result.evidence_id;
 	}
 

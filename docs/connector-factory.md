@@ -126,8 +126,56 @@ branch revision. This pins the operator script, helpers, regression suite and
 SDK generator together. The read-only clone credential is removed before any
 repository code executes. The trusted runbook command selects `version,search`
 with the five-identity sample; it is not exhaustive provider coverage. Both
-version reads and the search summary must identify the merged release SHA.
+version reads and the search summary must identify the release under proof.
 A partial search, rollback or missing evidence cannot close Linear.
+
+That smoke does not prove the task's connector. Each candidate commits an
+acceptance recipe at `apps/identity/internal/connectors/<id>/acceptance.json`
+(`app/connectors/acceptance.ts`): the behaviour changed, fixtures, required
+session and route, the public operation, the expected execution and fields,
+the ledger revision followers must report, and uncovered conditions.
+Production reads the recipe from the merge commit, polls the API and worker
+`/healthz` until both report that ledger revision, adds the fixture as a
+person through the public API, and passes only when the person's
+`lookup.records` hold a record from that connector with every expected field
+and no lookup check lists the connector as unanswered. Each failure is typed
+(`connector_not_executed`, `ledger_revision_not_observed`, `stale_build` and
+so on). Only public handle fixtures can be carried in a recipe; sealed email
+and phone controls answer `fixture_unresolved` until a resolver exists.
+
+When a later merge B that contains A is released instead of A, or production
+moves from A to B during proof, the receipt records `release_state:
+superseded` with the requested and observed SHAs, and the whole proof runs
+again against B. Ancestry alone never passes. A build that does not contain A
+is refused as `stale_build`.
+
+### Verification bundle
+
+Each candidate and production verification stores one typed bundle
+(`app/connectors/bundle.ts`) as `verification` or `production` evidence. It names
+the task and acceptance-recipe digests; the candidate, trusted base and observed
+release SHAs; fixture and session-generation digests; the exact selection and
+reproduction commands; expected-versus-observed assertions; the paired negative
+control; artifact references with SHA-256; the model and harness identity
+(model, Claude Code version, launcher, prompt and skill digests); uncovered
+conditions; and a failure class: `missing_prerequisite`, `product_failure`,
+`stale_control`, `superseded_release` or `environment_failure`.
+
+Artifacts go to the same evidence route before any temporary directory is
+deleted, as UTF-8 chunks of at most 12,000 characters, each bound to the file's
+SHA-256. A binary file, a file over 64 chunks, or a chunk the ledger refuses as
+sensitive keeps only its digest and is listed as uncovered. A ledger outage
+fails the run.
+
+The verifier names its negative control as connector test files and a
+`go test -run` pattern. The host copies those files onto the trusted base, where
+the pattern must fail, and runs it on the candidate, where it must pass. The
+host, not the agent summary, refuses a review or production proof whose bundle
+is missing, malformed, for another revision, failing, without passing
+assertions or uploaded artifacts, or, for a candidate, without a valid negative
+control and harness identity. The ledger client keeps known `cleanup_only`,
+`resource_charges` and `evidence_ids` when a heartbeat or evidence response
+omits them, and refuses a claim that omits them.
 
 `npm run check` runs lint, TypeScript and the fake-service boundary suite. Live
 Claude subscription, sandbox image installation, unrestricted networking, Fly

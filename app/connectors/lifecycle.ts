@@ -1,3 +1,4 @@
+import { bundleRefusal } from "./bundle.js";
 import type { Claimed, State } from "./ledger.js";
 
 export interface Candidate {
@@ -9,6 +10,7 @@ export interface Review {
 	head: string;
 	evidence: string[];
 	reason: string;
+	bundle: unknown;
 }
 export type PullState = { kind: "pending" } | { kind: "repair"; reason: string } | { kind: "merged"; head: string; merge: string };
 export interface LifecyclePorts {
@@ -19,7 +21,7 @@ export interface LifecyclePorts {
 	disarm(pr: number): Promise<void>;
 	autoMerge(pr: number, head: string): Promise<void>;
 	pull(pr: number): Promise<PullState>;
-	production(merge: string): Promise<{ status: "pending" | "failed" | "passed"; sha: string; evidence: string[] }>;
+	production(merge: string): Promise<{ status: "pending" | "failed" | "passed"; sha: string; evidence: string[]; bundle: unknown }>;
 	closeLinear(evidence: string[]): Promise<void>;
 	block(reason: string): Promise<void>;
 }
@@ -42,11 +44,12 @@ export async function advance(claim: Claimed, ports: LifecyclePorts, repairRound
 			const candidate = await ports.implement(reason);
 			await checkpoint({ phase: "review", head_sha: candidate.head, evidence_ids: candidate.evidence });
 			const review = await ports.verify(candidate);
-			if (review.passed && review.head === candidate.head && review.evidence.length > 0) {
+			const refusal = bundleRefusal(review.bundle, { stage: "candidate", sha: candidate.head });
+			if (review.passed && review.head === candidate.head && review.evidence.length > 0 && !refusal) {
 				accepted = { ...candidate, evidence: [...candidate.evidence, ...review.evidence] };
 				break;
 			}
-			reason = review.reason || "Independent verification did not prove this head";
+			reason = review.reason || (refusal ? `Host refused verification: ${refusal}` : "Independent verification did not prove this head");
 			await checkpoint({ repair_reason: reason });
 		}
 		if (!accepted) return block(reason ?? "Verification failed");
@@ -72,8 +75,10 @@ export async function advance(claim: Claimed, ports: LifecyclePorts, repairRound
 		if (!claim.state.merge_sha) throw new Error("Release checkpoint lacks merge SHA");
 		const proof = await ports.production(claim.state.merge_sha);
 		if (proof.status === "pending") return "waiting";
+		const refusal = bundleRefusal(proof.bundle, { stage: "production", sha: claim.state.merge_sha });
 		if (proof.status !== "passed" || proof.sha !== claim.state.merge_sha || proof.evidence.length === 0)
 			return block("Production did not prove the merged change");
+		if (refusal) return block(`Host refused production verification: ${refusal}`);
 		await checkpoint({ phase: "production_verified", evidence_ids: [...claim.state.evidence_ids, ...proof.evidence] });
 	}
 	if (claim.state.phase !== "production_verified") throw new Error("Unknown lifecycle checkpoint");

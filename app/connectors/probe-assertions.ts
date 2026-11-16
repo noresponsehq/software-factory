@@ -50,7 +50,7 @@ export async function assertProbe(
 	let checks = 0;
 	const times: number[] = [];
 	const fail = (reason: string, extra: Record<string, unknown> = {}) =>
-		new FactoryFailure("probe", { status: "fail", reason, checks, failed: 1, skipped: 0, ...extra });
+		new FactoryFailure("probe", "product_failure", { status: "fail", reason, checks, failed: 1, skipped: 0, ...extra });
 	for (const c of cases) {
 		for (let attempt = 0; attempt < control.trials; attempt++) {
 			const response = await lookup(c.value, true);
