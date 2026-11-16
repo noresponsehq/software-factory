@@ -89,7 +89,7 @@ export async function runPreflight(opts: PreflightOptions, out: Reporter): Promi
 	}
 	out.warn(
 		"Model and Sandbox execution remain unverified",
-		"Confirm Sandboxes access in Oregon and configured-model access; the approved Triage smoke test verifies execution",
+		"Confirm Sandboxes access in Oregon and Claude subscription access; the reserved connector smoke verifies execution",
 	);
 	out.line("Key presence does not verify model access or provider spend caps. Preflight creates no Sandbox and makes no model request.");
 	return out.summary();

@@ -10,13 +10,15 @@ import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import { config } from "../app/config/index.js";
 import { githubApiUrl } from "../app/github/auth.js";
-import { writeEnvFile } from "./lib/env-file.js";
+import { credentialPath, MAIN_CREDENTIAL_FILE, writeEnvFile } from "./lib/env-file.js";
 import { githubWebUrl } from "./lib/github.js";
 import { buildManifest, exchangeManifestCode, formPage, newState, registrationUrl, startCallbackServer } from "./lib/manifest.js";
 import { bold, dim, errorMessage, green } from "./lib/output.js";
+import { HARNESS_KEY_ENV } from "./lib/requirements.js";
 
 const { values } = parseArgs({
 	options: {
+		"credential-file": { type: "string", default: MAIN_CREDENTIAL_FILE },
 		org: { type: "string" },
 		name: { type: "string" },
 		port: { type: "string" },
@@ -24,6 +26,8 @@ const { values } = parseArgs({
 		"write-env": { type: "boolean", default: true },
 	},
 });
+
+const credentialFile = credentialPath(values["credential-file"]);
 
 const org = values.org?.trim() || undefined;
 if (org && !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(org)) throw new Error(`--org is not a GitHub organization name: ${org}`);
@@ -68,10 +72,12 @@ console.log(`\n${bold("1. Install the App")} on every repository in factory.conf
 console.log(`   ${app.html_url}/installations/new`);
 for (const repo of repos) console.log(`   - ${repo}`);
 
-await writeEnvFile(".env", env);
-console.log(`\n${green("✓")} Wrote GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, and GITHUB_WEBHOOK_SECRET to .env`);
+await writeEnvFile(credentialFile, env);
+console.log(`\n${green("✓")} Wrote GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, and GITHUB_WEBHOOK_SECRET to ${credentialFile}`);
 
-console.log(`\n${bold("2. Create the Render env groups")} after adding RENDER_API_KEY, RENDER_WORKSPACE_ID, and ANTHROPIC_API_KEY to .env:`);
+console.log(
+	`\n${bold("2. Create the Render env groups")} after adding RENDER_API_KEY, RENDER_WORKSPACE_ID, and ${HARNESS_KEY_ENV.join(", ")} to ${credentialFile}:`,
+);
 console.log("   npm run setup:render");
 
 console.log(`\n${bold("3. Deploy the Blueprint")}, then connect the webhook once the gateway is live:`);

@@ -18,19 +18,22 @@ This file applies to the whole repository.
 - Local development:
   [CONTRIBUTING.md](CONTRIBUTING.md)
 
-Follow runbooks in order. Stop at every human checkpoint. Do not claim setup
-is complete until both `doctor` checks and the Triage smoke test pass.
+Follow runbooks in order. Existing user authorization governs ordinary setup and delivery.
+Do not claim connector setup is complete until both service `doctor` checks and
+the reserved connector lifecycle smoke pass.
 
 ## System boundaries
 
-software-factory deploys two processes:
+software-factory deploys two services plus scheduled connector intake:
 
 - `app/entrypoints/gateway.ts` verifies webhooks and starts tasks.
 - `app/entrypoints/workflows.ts` registers and runs tasks.
+- `scripts/connector-intake.ts` polls assigned issues and health events, admits
+  daily costs, and dispatches tasks. It has no model or candidate execution.
 
 Agents run inside Render Sandboxes. Only code in the Workflows service writes
-to GitHub. GitHub and Render Workflows hold application state; there is no
-database.
+to GitHub. GitHub and Render Workflows hold upstream application state. Connector mode
+uses the existing D1 ledger for leases, costs, phases and evidence.
 
 Two dependency rules are mandatory:
 

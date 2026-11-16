@@ -14,6 +14,13 @@ export interface RepoConfig {
 }
 
 export interface FactoryConfig {
+	connectors?: {
+		marker: string;
+		dailyUsd: number;
+		reserveUsd: number;
+		toolAllowanceUsd: number;
+		costs?: { baselineDailyUsd: number; storageDailyUsd: number; dispatchDailyUsd: number; sandboxTrafficUsd: number; probeTrafficUsd: number };
+	};
 	/** Repositories the factory acts on, keyed by "owner/name". Webhooks from any other repository are ignored. */
 	repos: Record<string, RepoConfig>;
 	labels: { triage: string; specApproved: string; prReview: string; autopilot: string };
@@ -40,12 +47,12 @@ export function defineFactoryConfig(config: FactoryConfig): FactoryConfig {
 }
 
 export default defineFactoryConfig({
+	connectors: { marker: "factory:connector", dailyUsd: 50, reserveUsd: 8, toolAllowanceUsd: 0.5 },
 	repos: {
-		"render-examples/render-factory-example-target": {
+		"noresponsehq/noresponse": {
 			baseBranch: "main",
-			install: "npm ci",
-			verify: ["npm run build", "npm test"],
-			egress: ["registry.npmjs.org"],
+			verify: ["cd apps/identity && go test ./internal/connector/..."],
+			egress: "allow-all",
 		},
 	},
 	labels: {

@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import type { SandboxSnapshot } from "@renderinc/sdk";
 import { ClientError, SandboxSnapshotNotFoundError } from "@renderinc/sdk";
-import type { SandboxSnapshot } from "@renderinc/sdk/experimental";
 import { create as createTar } from "tar";
-import type { RepoContext } from "../config/index.js";
+import { config, type RepoContext } from "../config/index.js";
 import { githubToken } from "../github/auth.js";
 import { bundleRunner } from "../runner/bundle.js";
 import { type SandboxApi, type SandboxClient, TRANSIENT } from "./client.js";
@@ -31,6 +31,8 @@ const SANDBOX_SCRIPTS_DIR = fileURLToPath(new URL("../../sandbox/", import.meta.
 /** Copied into APP_DIR and kept in the snapshot. `build/` is needed again when a restored sandbox fetches. */
 const RUNTIME_SCRIPTS = [
 	"install-tools.sh",
+	"install-connector-tools.sh",
+	"install-go.sh",
 	"as-runner.sh",
 	"run-agent.sh",
 	"collect-changes.sh",
@@ -47,6 +49,8 @@ const SANDBOX_GITCONFIG = "[core]\n\tfsmonitor = false\n[advice]\n\tdetachedHead
 const GITHUB_TOKEN_USER = "x-access-token";
 
 export interface SnapshotDeps {
+	signal?: AbortSignal;
+	allocation?: { name: string; started(id: string): Promise<void>; terminated(id: string): Promise<void> };
 	/** A read-only token for the repository. Defaults to a GitHub App installation token with `contents: read`. */
 	readToken?: (repo: RepoContext) => Promise<string>;
 }
@@ -64,7 +68,7 @@ export function readToken(repo: RepoContext): Promise<string> {
 
 /** Runs a command as the runner user from REPO_DIR (as-runner.sh), with each argument quoted. */
 export function asRunner(...argv: string[]): string {
-	return `bash ${APP_DIR}/as-runner.sh ${argv.map(shq).join(" ")}`;
+	return `/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 3600 /bin/bash ${APP_DIR}/as-runner.sh ${argv.map(shq).join(" ")}`;
 }
 
 /** The credential helper that answers git from a staged `<dir>/<host>` file; the token is never in argv or config. */
@@ -88,6 +92,9 @@ export function credentialFile(token: string): string {
 
 /** Builds the repository's named snapshot at `sha` and prunes older ones, keeping the newest two. */
 export async function buildSnapshot(client: SandboxClient, repo: RepoContext, sha: string, deps: SnapshotDeps = {}): Promise<BuiltSnapshot> {
+	const cleanupClient = client;
+	if (deps.signal) client = client.withSignal(deps.signal);
+	if (config.connectors && !deps.allocation) throw new Error("Connector snapshot build requires a ledger allocation");
 	if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`refusing to build ${repo.fullName} at ${JSON.stringify(sha)}: not a commit SHA`);
 	const branch = repo.config.baseBranch;
 	if (!SAFE_REF.test(branch)) throw new Error(`${repo.fullName}: unsupported base branch ${JSON.stringify(branch)}`);
@@ -99,8 +106,15 @@ export async function buildSnapshot(client: SandboxClient, repo: RepoContext, sh
 	log("info", "snapshot build started", { repo: repo.fullName, sha, snapshot: name });
 
 	const egress = builderEgress(repo);
-	const { id } = await client.call(() => client.api.create({ timeoutSeconds: BUILDER_TIMEOUT_SECONDS, networkPolicy: egress }));
+	const { id } = await client.call(() =>
+		client.api.create({
+			timeoutSeconds: BUILDER_TIMEOUT_SECONDS,
+			networkPolicy: egress,
+			...(config.connectors ? { plan: "2c-4g" as const, idleTimeoutSeconds: 0, name: deps.allocation?.name } : {}),
+		}),
+	);
 	try {
+		await deps.allocation?.started(id);
 		await client.waitRunning(id);
 
 		// ── 1. Scripts, tools, runner user, self-test ───────────────────
@@ -118,6 +132,7 @@ export async function buildSnapshot(client: SandboxClient, repo: RepoContext, sh
 			boot,
 		);
 		await client.check(id, `bash ${APP_DIR}/install-tools.sh`, prepare);
+		if (config.connectors) await client.check(id, `bash ${APP_DIR}/install-connector-tools.sh`, prepare);
 		const node = await nodePath(client, id);
 		await client.check(id, createRunnerUserCommand(), boot);
 		await client.upload(id, `${APP_DIR}/env`, envFileContent(node));
@@ -164,10 +179,15 @@ export async function buildSnapshot(client: SandboxClient, repo: RepoContext, sh
 
 		const snap = await createSnapshot(client, id, name);
 		await pruneSnapshots(client, snap.sandboxGroupId, name, KEEP_SNAPSHOTS);
+		deps.signal?.throwIfAborted();
 		log("info", "snapshot build finished", { repo: repo.fullName, sha, snapshot: name, id: snap.id, ms: Date.now() - started });
 		return { id: snap.id, sandboxGroupId: snap.sandboxGroupId, name, manifest };
 	} finally {
-		await client.terminateQuietly(id);
+		if (deps.allocation) {
+			await cleanupClient.terminate(id);
+			await cleanupClient.confirmTerminated(id);
+			await deps.allocation.terminated(id);
+		} else await cleanupClient.terminateQuietly(id);
 	}
 }
 
@@ -261,7 +281,7 @@ async function createSnapshot(client: SandboxClient, sandboxId: string, name: st
 	const until = Date.now() + client.t.snapshotTimeoutMs;
 	while (snap.status === "creating") {
 		if (Date.now() > until) throw new Error(`snapshot ${snap.id} still creating after ${client.t.snapshotTimeoutMs}ms`);
-		await sleep(client.t.pollMs);
+		await sleep(client.t.pollMs, undefined, { signal: client.signal });
 		const { id, sandboxGroupId } = snap;
 		snap = await client.call(() => client.api.snapshots.get({ sandboxGroupId, snapshotId: id }), { retryOn: TRANSIENT });
 	}

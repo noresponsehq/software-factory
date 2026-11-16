@@ -1,6 +1,6 @@
-import type { SandboxNetworkPolicy } from "@renderinc/sdk/experimental";
+import type { SandboxNetworkPolicy } from "@renderinc/sdk";
 import { AGENTS } from "../agents/registry.js";
-import { assertEgressHosts, type RepoContext } from "../config/index.js";
+import { assertEgressHosts, config, type RepoContext } from "../config/index.js";
 
 /** Clone and fetch reach GitHub over HTTPS. */
 const GITHUB_HOST = "github.com";
@@ -33,6 +33,7 @@ export function egressHint(repo: RepoContext, policy: SandboxNetworkPolicy): str
 }
 
 function egressPolicy(repo: RepoContext, base: readonly string[]): SandboxNetworkPolicy {
+	if (config.connectors) return { type: "allow-all" };
 	const extra = repo.config.egress ?? [];
 	if (extra === "allow-all") return { type: "allow-all" };
 	// The API rejects a domain listed twice.

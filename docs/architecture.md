@@ -1,5 +1,10 @@
 # Architecture
 
+Connector mode uses the D1 lease, budget and lifecycle described in
+[connector execution](connector-factory.md). Its builders, candidate Sandboxes
+and local browsers use unrestricted networking with conservative cost admission.
+The upstream workflow below applies to configurations without connector mode.
+
 Agents inspect and modify repositories inside short-lived Render Sandboxes.
 Code in the Workflows service validates their results and performs every
 GitHub write.
@@ -199,7 +204,13 @@ Clone and fetch credentials are read-only and temporary. Runtime files are
 root-owned and read-only. Agents and repository commands run as an
 unprivileged user.
 
-Every Sandbox is created with an HTTPS egress allow-list built by the
+Connector mode creates builders and restored VMs with Render `allow-all`.
+Claude and local Chromium can reach all domains. Root launchers use a clean
+environment before `setpriv`, and candidate code runs without capabilities.
+The separate subscription and scoped ledger credentials remain readable by
+candidate code; broad host credentials do not enter the VM.
+
+Other configurations create Sandboxes with an HTTPS egress allow-list built by the
 Workflows host from trusted configuration. Task Sandboxes reach `github.com`,
 the agents' model APIs, and the repository's configured `egress` hosts. The
 snapshot builder reaches `github.com`, Debian's package mirror, and the
@@ -224,12 +235,13 @@ Changes must preserve these properties:
 5. Run every model-directed tool inside a Sandbox.
 6. Build repositories, refs, branches, and write targets from trusted input.
 7. Publish only after GitHub reproduces the validated tree SHA.
-8. Stop automation at a draft pull request and a COMMENT review.
+8. The upstream examples stop at a draft PR and COMMENT review. Connector mode uses the independently verified ready-PR and production gates in [the connector workflow](connector-factory.md).
 9. Implement the specification as it existed when approved.
 10. Give every Sandbox a provider timeout and `finally` cleanup. Record a
     GitHub task's Sandbox so cancellation can terminate it.
-11. Create every Sandbox with an egress allow-list built from trusted
-    configuration. Only a repository's configured `egress: "allow-all"` lifts it.
+11. Select networking from trusted host configuration. Connector mode uses
+    `allow-all`; other configurations default to the HTTPS allow-list unless
+    the repository selects `egress: "allow-all"`.
 
 Tests pin these invariants and the tool authority of every built-in agent.
 

@@ -16,6 +16,16 @@ export function assertEgressHosts(hosts: readonly string[], where: string): void
 
 /** Checks what the type system can't. Runs when this module loads, so an invalid config stops every service at startup. */
 export function validateConfig(c: FactoryConfig): void {
+	if (
+		c.connectors &&
+		(!Number.isFinite(c.connectors.dailyUsd) ||
+			c.connectors.dailyUsd <= 0 ||
+			c.connectors.reserveUsd <= 0 ||
+			c.connectors.reserveUsd > c.connectors.dailyUsd ||
+			c.connectors.toolAllowanceUsd < 0 ||
+			c.connectors.toolAllowanceUsd > c.connectors.reserveUsd)
+	)
+		throw new Error("Invalid connector budget");
 	for (const [fullName, repo] of Object.entries(c.repos)) {
 		if (repo.egress !== undefined && repo.egress !== "allow-all") assertEgressHosts(repo.egress, `factory.config.ts repos["${fullName}"]`);
 	}
@@ -58,6 +68,8 @@ export function requireEnv(name: string): string {
 
 /** Task names, shared by the gateway (which starts them) and the Workflows service (which registers them). */
 export const TASKS = {
+	connector: "connector",
+	connectorContinuation: "connector-continuation",
 	triage: "triage",
 	specToPr: "spec-to-pr",
 	prReview: "pr-review",

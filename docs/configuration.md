@@ -62,7 +62,13 @@ intentionally want no command-based verification.
 
 ### Sandbox egress
 
-Sandboxes reach the network through an HTTPS allow-list that Render enforces.
+Connector mode creates both builders and restored Sandboxes with Render
+`allow-all`; local Chromium can reach any domain. `connectors.costs` sets positive
+USD estimates for `baselineDailyUsd` (1), `storageDailyUsd` (0.5),
+`dispatchDailyUsd` (1), `sandboxTrafficUsd` (0.2), and `probeTrafficUsd` (0.2).
+These share the daily admission budget and may be exceeded by provider bills.
+
+Other configurations reach the network through an HTTPS allow-list that Render enforces.
 Every other destination fails as a reset connection. The factory builds each
 list:
 
@@ -388,3 +394,17 @@ and create each group in the table with the exact name and variables shown.
 Paste values from `.env` or from their source without showing them in chat.
 Workflows `doctor` still reads these values locally, so export them in the
 shell where it runs.
+
+## NoResponse connector mode
+
+See [connector configuration](connector-factory.md#configuration-and-setup) for subscription credentials, intake, D1 leases and the shared budget. `FactoryConfig.connectors` selects this mode. The gateway receives no ledger, Linear, Fly or Claude credential.
+
+Factory Fly probes use `FACTORY_FLY_API_TOKEN`, scoped to `nr-probe`. The host
+passes it to the Fly child process as `FLY_API_TOKEN`; it never overwrites the
+main checkout's generic Fly credentials. Production `version,search` smoke
+receives only its search key and needs no Fly credential.
+
+The optional `NR_PROD_WORKER_LOGS_TOKEN` is copied to the workflows group when
+present. It supports production search failure attribution and has no credential
+fallback. `factory-intake` uses a dedicated intake group, polls every five minutes
+UTC and admits the daily dispatch allowance before starting workflow tasks.

@@ -1,7 +1,7 @@
 /**
  * Read-only checks of a deployment. Never prints a secret; exits 1 when any check fails.
  *
- *   npm run doctor [-- --service gateway|workflows|all]
+ *   npm run doctor [-- --service gateway|workflows|intake|all]
  *
  * Checks the environment it runs in: locally that's .env; in a service's Render Shell it's that service's env.
  */
@@ -16,11 +16,12 @@ const { values } = parseArgs({ options: { service: { type: "string", default: "a
 const SELECTIONS: Record<string, Service[]> = {
 	gateway: ["gateway"],
 	workflows: ["workflows"],
-	all: ["gateway", "workflows"],
+	intake: ["intake"],
+	all: config.connectors ? ["gateway", "workflows", "intake"] : ["gateway", "workflows"],
 };
 const services = SELECTIONS[values.service ?? "all"];
 if (!services) {
-	console.error("--service must be gateway, workflows, or all");
+	console.error("--service must be gateway, workflows, intake, or all");
 	process.exit(2);
 }
 

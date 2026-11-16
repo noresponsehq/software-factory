@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { SandboxNetworkPolicy } from "@renderinc/sdk";
 import { SandboxSnapshotNotFoundError, SandboxSnapshotNotReadyError } from "@renderinc/sdk";
-import type { SandboxNetworkPolicy } from "@renderinc/sdk/experimental";
 import { z } from "zod";
 import { config, type RepoContext } from "../config/index.js";
 import { type SandboxClient, sandboxClient } from "./client.js";
@@ -39,7 +39,8 @@ function connectSandbox(id: string, client?: SandboxClient): Sandbox {
 		id,
 		async exec(command, opts = {}) {
 			const c = get();
-			const wrapped = opts.asRunner ? asRunner("bash", "-c", command) : command;
+			const seconds = Math.max(1, Math.min(3600, Math.floor((opts.timeoutMs ?? c.t.execTimeoutMs) / 1000)));
+			const wrapped = opts.asRunner ? asRunner("/usr/bin/timeout", "--kill-after=5s", String(seconds), "bash", "-c", command) : command;
 			return c.exec(id, wrapped, { timeoutMs: opts.timeoutMs ?? c.t.execTimeoutMs, signal: opts.signal });
 		},
 		async upload(path, data) {
@@ -55,6 +56,9 @@ function connectSandbox(id: string, client?: SandboxClient): Sandbox {
 }
 
 export interface OpenSandboxDeps extends SnapshotDeps {
+	resourceName?: string;
+	timeoutSeconds?: number;
+	onCreated?: (id: string) => Promise<void>;
 	client?: SandboxClient;
 	resolveBaseHead?: (repo: RepoContext, deps: SnapshotDeps) => Promise<string>;
 	buildSnapshot?: (client: SandboxClient, repo: RepoContext, sha: string, deps: SnapshotDeps) => Promise<BuiltSnapshot>;
@@ -67,9 +71,10 @@ export interface OpenSandboxDeps extends SnapshotDeps {
  */
 export async function openSandbox(repo: RepoContext, ref: SandboxRef, deps: OpenSandboxDeps = {}): Promise<OpenedSandbox> {
 	checkRef(ref);
-	const client = deps.client ?? sandboxClient();
+	const cleanupClient = deps.client ?? sandboxClient();
+	const client = deps.signal ? cleanupClient.withSignal(deps.signal) : cleanupClient;
 	const egress = taskEgress(repo);
-	const id = await createFromSnapshot(client, repo, egress, deps);
+	const id = await createFromSnapshot(client, repo, egress, deps, cleanupClient);
 	try {
 		await client.waitRunning(id);
 		await ensureRunnerPayload(client, id);
@@ -88,9 +93,10 @@ export async function openSandbox(repo: RepoContext, ref: SandboxRef, deps: Open
 				await runInstall(client, id, install, egressHint(repo, egress));
 			}
 		}
-		return { ...connectSandbox(id, client), headSha, manifest };
+		deps.signal?.throwIfAborted();
+		return { ...connectSandbox(id, client), close: () => cleanupClient.terminate(id), headSha, manifest };
 	} catch (err) {
-		await client.terminateQuietly(id);
+		await cleanupClient.terminateQuietly(id);
 		throw err;
 	}
 }
@@ -123,28 +129,51 @@ function isSnapshotUnavailable(err: unknown): boolean {
 	return err instanceof SandboxSnapshotNotFoundError || err instanceof SandboxSnapshotNotReadyError;
 }
 
-async function createFromSnapshot(client: SandboxClient, repo: RepoContext, egress: SandboxNetworkPolicy, deps: OpenSandboxDeps): Promise<string> {
+async function createFromSnapshot(
+	client: SandboxClient,
+	repo: RepoContext,
+	egress: SandboxNetworkPolicy,
+	deps: OpenSandboxDeps,
+	cleanupClient: SandboxClient,
+): Promise<string> {
 	const name = snapshotName(repo);
 	const create = async () =>
 		(
 			await client.call(() =>
 				client.api.create({
 					snapshotName: name,
+					...(deps.resourceName ? { name: deps.resourceName } : {}),
+					...(config.connectors ? { plan: "2c-4g" as const, idleTimeoutSeconds: 0 } : {}),
 					networkPolicy: egress,
-					timeoutSeconds: config.sandbox.timeoutSeconds,
+					timeoutSeconds: deps.timeoutSeconds ?? config.sandbox.timeoutSeconds,
 				}),
 			)
 		).id;
 	try {
-		return await create();
+		const id = await create();
+		try {
+			await deps.onCreated?.(id);
+		} catch (error) {
+			await cleanupClient.terminateQuietly(id);
+			throw error;
+		}
+		return id;
 	} catch (err) {
 		if (!isSnapshotUnavailable(err)) throw err;
+		if (config.connectors) throw new Error("Connector snapshot missing; build it under a separate setup reservation");
 		log("warn", "no available snapshot; building one inline", { repo: repo.fullName, snapshot: name, error: errorMessage(err) });
 	}
 	const sha = await (deps.resolveBaseHead ?? resolveBaseHead)(repo, deps);
 	await (deps.buildSnapshot ?? buildSnapshot)(client, repo, sha, deps);
 	try {
-		return await create();
+		const id = await create();
+		try {
+			await deps.onCreated?.(id);
+		} catch (error) {
+			await cleanupClient.terminateQuietly(id);
+			throw error;
+		}
+		return id;
 	} catch (err) {
 		if (isSnapshotUnavailable(err)) {
 			throw new Error(`no available snapshot named ${name} even after building one inline: ${errorMessage(err)}`, { cause: err });
