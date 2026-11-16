@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { FailureClass, VerificationBundle } from "./bundle.js";
 import { FactoryFailure } from "./failure.js";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
@@ -45,8 +46,20 @@ export type ProofReason =
 	| "stale_build"
 	| "production_kept_moving";
 
+const PROOF_CLASS: Record<ProofReason, FailureClass> = {
+	acceptance_recipe_missing: "missing_prerequisite",
+	fixture_unresolved: "missing_prerequisite",
+	connector_not_executed: "product_failure",
+	connector_unanswered: "product_failure",
+	fields_missing: "product_failure",
+	ledger_revision_not_observed: "environment_failure",
+	stale_build: "superseded_release",
+	production_kept_moving: "superseded_release",
+};
+
 export function proofFailure(reason: ProofReason, detail: Record<string, unknown> = {}): FactoryFailure {
-	return new FactoryFailure("production", { status: "fail", stage: "acceptance", reason, ...detail });
+	const failure = PROOF_CLASS[reason];
+	return new FactoryFailure("production", failure, { status: "fail", stage: "acceptance", reason, failure_class: failure, ...detail });
 }
 
 const Lookup = z.object({
@@ -111,6 +124,7 @@ export type SmokeProof = {
 	checks: number;
 	failed: number;
 	skipped: number;
+	bundle: VerificationBundle;
 };
 export type ProofPorts = {
 	version: () => Promise<string>;

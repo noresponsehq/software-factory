@@ -1,0 +1,11 @@
+[
+	{
+		"cursor": "9xspGaXaBiFtZDhtN2twczczYjllcWsw",
+		"service": {
+			"id": "srv-dbtkmd8m7kps73b9eqk0",
+			"name": "factory-gateway",
+			"suspended": "not_suspended",
+			"type": "web_service"
+		}
+	}
+]

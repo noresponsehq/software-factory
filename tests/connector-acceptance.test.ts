@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { type AcceptanceRecipe, type ProofPorts, proveRelease } from "../app/connectors/acceptance.js";
 import { released } from "../app/connectors/release.js";
+import type { VerificationBundle } from "../app/connectors/bundle.js";
 import type { GitHubHttp } from "../app/github/index.js";
 
 const A = "a".repeat(40);
@@ -30,6 +31,7 @@ function ports(overrides: Partial<ProofPorts> = {}) {
 		checks: 2,
 		failed: 0,
 		skipped: 0,
+		bundle: { assertions: [], uncovered: [] } as unknown as VerificationBundle,
 	}));
 	return {
 		version: vi.fn(async () => A),

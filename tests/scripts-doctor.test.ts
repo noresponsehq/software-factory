@@ -36,7 +36,7 @@ const APP = {
 };
 const LABEL_NAMES = ["factory:triage", "factory:spec-approved", "factory:pr-review", "factory:autopilot", "factory:working"];
 const DELIVERY = { id: 1, delivered_at: "2026-10-28T11:59:00Z", status_code: 202, event: "issues" };
-const TASK_NAMES = ["connector", "connector-continuation", "triage", "spec-to-pr", "pr-review", "autopilot", "cancel", "refresh-snapshot"];
+const TASK_NAMES = ["connector", "connector-continuation", "triage", "spec-to-pr", "pr-review", "autopilot", "cancel", "refresh-snapshot", "doctor"];
 
 interface Call {
 	method: string;

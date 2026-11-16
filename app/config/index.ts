@@ -23,9 +23,10 @@ export function validateConfig(c: FactoryConfig): void {
 			c.connectors.reserveUsd <= 0 ||
 			c.connectors.reserveUsd > c.connectors.dailyUsd ||
 			c.connectors.toolAllowanceUsd < 0 ||
-			c.connectors.toolAllowanceUsd > c.connectors.reserveUsd)
+			c.connectors.toolAllowanceUsd > c.connectors.reserveUsd ||
+			!/^[a-z0-9.-]{1,100}$/.test(c.connectors.model))
 	)
-		throw new Error("Invalid connector budget");
+		throw new Error("Invalid connector budget or model");
 	for (const [fullName, repo] of Object.entries(c.repos)) {
 		if (repo.egress !== undefined && repo.egress !== "allow-all") assertEgressHosts(repo.egress, `factory.config.ts repos["${fullName}"]`);
 	}
@@ -76,5 +77,6 @@ export const TASKS = {
 	autopilot: "autopilot",
 	cancel: "cancel",
 	refreshSnapshot: "refresh-snapshot",
+	doctor: "doctor",
 } as const;
 export type TaskName = (typeof TASKS)[keyof typeof TASKS];
