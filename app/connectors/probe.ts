@@ -169,7 +169,12 @@ export async function probe(
 		return { head: input.head, region: "iad", binary_sha256: createHash("sha256").update(binary).digest("hex"), result };
 	} catch (error) {
 		if (error instanceof FactoryFailure) throw error;
-		throw new FactoryFailure("probe", { status: "fail", head: input.head, region: "iad", stage: "build_dispatch_or_validation" });
+		throw new FactoryFailure("probe", "environment_failure", {
+			status: "fail",
+			head: input.head,
+			region: "iad",
+			stage: "build_dispatch_or_validation",
+		});
 	} finally {
 		try {
 			if (machine) {

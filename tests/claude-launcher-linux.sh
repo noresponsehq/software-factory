@@ -22,7 +22,7 @@ if (process.argv.includes('auth')) console.log(JSON.stringify({loggedIn:true,aut
 else console.log(JSON.stringify({is_error:false,structured_output:{status:'verified',summary:'CLI stand-in only',evidence:[]}}));
 JS
 chmod 755 /usr/local/bin/claude
-printf '%s' '{"seconds":10,"subscriptionToken":"offline-test","runToken":"offline-test","ledgerUrl":"https://ledger.invalid","prompt":"offline","schema":{}}' > "$stage/input.json"
+printf '%s' '{"seconds":10,"subscriptionToken":"offline-test","runToken":"offline-test","ledgerUrl":"https://ledger.invalid","prompt":"offline","model":"claude-opus-5-5","schema":{}}' > "$stage/input.json"
 env -i PATH=/usr/local/bin:/usr/bin:/bin node "$stage/launch.mjs" "$stage" > "$stage/result.json"
 node - "$stage" <<'JS'
 const fs = require('node:fs');

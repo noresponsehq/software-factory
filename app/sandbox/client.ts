@@ -131,12 +131,12 @@ export class SandboxClient {
 		data: string | Buffer,
 		opts: { contentType?: SandboxUploadContentType; signal?: AbortSignal } = {},
 	): Promise<void> {
-		opts = { ...opts, signal: opts.signal && this.signal ? AbortSignal.any([opts.signal, this.signal]) : opts.signal ?? this.signal };
+		opts = { ...opts, signal: opts.signal && this.signal ? AbortSignal.any([opts.signal, this.signal]) : (opts.signal ?? this.signal) };
 		await this.call(() => this.api.upload(id, path, data, undefined, opts), { retryOn: TRANSIENT, signal: opts.signal });
 	}
 
 	async download(id: string, path: string, signal?: AbortSignal): Promise<Buffer> {
-		signal = signal && this.signal ? AbortSignal.any([signal, this.signal]) : signal ?? this.signal;
+		signal = signal && this.signal ? AbortSignal.any([signal, this.signal]) : (signal ?? this.signal);
 		const file = await this.call(() => this.api.download(id, path, undefined, signal), { retryOn: TRANSIENT, signal });
 		return file.data;
 	}

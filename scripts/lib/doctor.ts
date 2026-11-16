@@ -282,7 +282,12 @@ async function checkConnectorServices(opts: DoctorOptions, out: Reporter) {
 			body: undefined,
 		},
 		{ name: "Linear viewer", url: "https://api.linear.app/graphql", token: opts.env.LINEAR_API_KEY, body: JSON.stringify({ query: "{viewer{id}}" }) },
-		{ name: "Fly probe machine access", url: "https://api.machines.dev/v1/apps/nr-probe/machines", token: opts.env.FACTORY_FLY_API_TOKEN, body: undefined },
+		{
+			name: "Fly probe machine access",
+			url: "https://api.machines.dev/v1/apps/nr-probe/machines",
+			token: opts.env.FACTORY_FLY_API_TOKEN,
+			body: undefined,
+		},
 	];
 	for (const check of checks) {
 		if (!check.token) continue;

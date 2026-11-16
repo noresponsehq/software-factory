@@ -35,8 +35,9 @@ const APP = {
 	events: ["issues", "issue_comment", "pull_request", "push"],
 };
 const LABEL_NAMES = ["factory:triage", "factory:spec-approved", "factory:pr-review", "factory:autopilot", "factory:working"];
-const DELIVERY = { id: 1, delivered_at: "2026-10-28T11:59:00Z", status_code: 202, event: "issues" };
-const TASK_NAMES = ["connector", "connector-continuation", "triage", "spec-to-pr", "pr-review", "autopilot", "cancel", "refresh-snapshot"];
+const DELIVERY_ID = "3854412217638191123";
+const DELIVERY = { id: DELIVERY_ID, delivered_at: "2026-10-28T11:59:00Z", status_code: 202, event: "issues" };
+const TASK_NAMES = ["connector", "connector-continuation", "triage", "spec-to-pr", "pr-review", "autopilot", "cancel", "refresh-snapshot", "doctor"];
 
 interface Call {
 	method: string;
@@ -47,7 +48,7 @@ interface Call {
 interface World {
 	app?: Omit<typeof APP, "permissions"> & { permissions: Record<string, string> };
 	hook?: Record<string, unknown>;
-	deliveries?: { id: number; delivered_at: string; status_code: number; event: string }[];
+	deliveries?: { id: string; delivered_at: string; status_code: number; event: string }[];
 	installed?: boolean;
 	installation?: { permissions: Record<string, string>; events: string[] };
 	delivery?: unknown;
@@ -62,6 +63,12 @@ interface World {
 	tasksBody?: unknown;
 	tasksJson?: string;
 	tasksUnreachable?: boolean;
+}
+
+/** GitHub sends delivery ids as bare JSON numbers larger than Number.MAX_SAFE_INTEGER. */
+async function unquotedIds(response: Response): Promise<Response> {
+	const text = (await response.text()).replace(/"id":"(\d+)"/g, '"id":$1');
+	return new Response(text, { status: response.status, headers: response.headers });
 }
 
 function fakeFetch(world: World = {}) {
@@ -91,9 +98,9 @@ function fakeFetch(world: World = {}) {
 					},
 				);
 			case "GET api.github.com/app/hook/deliveries":
-				return json(world.deliveries ?? [DELIVERY], world.deliveriesStatus ?? 200);
-			case "GET api.github.com/app/hook/deliveries/1":
-				return json(world.delivery ?? { ...DELIVERY, url: "https://gw.onrender.com/webhooks/github" }, world.deliveryStatus ?? 200);
+				return unquotedIds(json(world.deliveries ?? [DELIVERY], world.deliveriesStatus ?? 200));
+			case `GET api.github.com/app/hook/deliveries/${DELIVERY_ID}`:
+				return unquotedIds(json(world.delivery ?? { ...DELIVERY, url: "https://gw.onrender.com/webhooks/github" }, world.deliveryStatus ?? 200));
 			case "GET api.github.com/repos/acme/web/installation":
 				return world.installed === false
 					? json({ message: "Not Found" }, 404)
@@ -259,7 +266,7 @@ describe("doctor", () => {
 			world: {
 				app: { ...APP, permissions: {}, events: [] },
 				hook: { url: "nope", content_type: "form", secret: "********" },
-				deliveries: [{ id: 3, delivered_at: "x", status_code: 500, event: "push" }],
+				deliveries: [{ id: "3", delivered_at: "x", status_code: 500, event: "push" }],
 				labels: [],
 				tasksStatus: 500,
 			},
