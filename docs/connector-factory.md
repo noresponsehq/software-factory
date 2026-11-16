@@ -108,8 +108,28 @@ branch revision. This pins the operator script, helpers, regression suite and
 SDK generator together. The read-only clone credential is removed before any
 repository code executes. The trusted runbook command selects `version,search`
 with the five-identity sample; it is not exhaustive provider coverage. Both
-version reads and the search summary must identify the merged release SHA.
+version reads and the search summary must identify the release under proof.
 A partial search, rollback or missing evidence cannot close Linear.
+
+That smoke does not prove the task's connector. Each candidate commits an
+acceptance recipe at `apps/identity/internal/connectors/<id>/acceptance.json`
+(`app/connectors/acceptance.ts`): the behaviour changed, fixtures, required
+session and route, the public operation, the expected execution and fields,
+the ledger revision followers must report, and uncovered conditions.
+Production reads the recipe from the merge commit, polls the API and worker
+`/healthz` until both report that ledger revision, adds the fixture as a
+person through the public API, and passes only when the person's
+`lookup.records` hold a record from that connector with every expected field
+and no lookup check lists the connector as unanswered. Each failure is typed
+(`connector_not_executed`, `ledger_revision_not_observed`, `stale_build` and
+so on). Only public handle fixtures can be carried in a recipe; sealed email
+and phone controls answer `fixture_unresolved` until a resolver exists.
+
+When a later merge B that contains A is released instead of A, or production
+moves from A to B during proof, the receipt records `release_state:
+superseded` with the requested and observed SHAs, and the whole proof runs
+again against B. Ancestry alone never passes. A build that does not contain A
+is refused as `stale_build`.
 
 `npm run check` runs lint, TypeScript and the fake-service boundary suite. Live
 Claude subscription, sandbox image installation, unrestricted networking, Fly
