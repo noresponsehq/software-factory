@@ -8,14 +8,13 @@ import { z } from "zod";
 import type { Sandbox } from "../sandbox/index.js";
 import { FactoryFailure } from "./failure.js";
 import { assertProbe, Control } from "./probe-assertions.js";
+import { TrustedControl } from "./trusted-controls.js";
 
 const execute = promisify(execFile);
 export interface ProbeInput {
-	connector: string;
 	head: string;
 	goVersion: string;
-	control: Control;
-	session?: string;
+	targets: { connector: string; control: Control; trusted: TrustedControl[]; session?: string }[];
 	proxies?: string;
 }
 export type HostExec = (args: string[]) => Promise<string>;
@@ -56,15 +55,23 @@ export async function probe(
 ) {
 	const input = z
 		.strictObject({
-			connector: z.string().regex(/^[a-z0-9_]+$/),
 			head: z.string().regex(/^[a-f0-9]{40}$/),
 			goVersion: z.string().regex(/^1\.\d+\.\d+$/),
-			control: Control,
-			session: z.string().optional(),
+			targets: z
+				.array(
+					z.strictObject({
+						connector: z.string().regex(/^[a-z0-9_]+$/),
+						control: Control,
+						trusted: z.array(TrustedControl),
+						session: z.string().optional(),
+					}),
+				)
+				.min(1)
+				.max(25),
 			proxies: z.string().optional(),
 		})
 		.parse(raw);
-	const build = await sandbox.exec("cd apps/identity && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/factory-probe ./cmd/probe", {
+	const build = await sandbox.exec("cd apps/identity && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -o /tmp/factory-probe ./cmd/probe", {
 		asRunner: true,
 		timeoutMs: 600000,
 	});
@@ -84,10 +91,7 @@ export async function probe(
 		);
 		const files: string[] = [];
 
-		for (const [key, value] of [
-			["session", input.session],
-			["proxies", input.proxies],
-		] as const) {
+		for (const [key, value] of [...input.targets.map((t) => [`session_${t.connector}`, t.session] as const), ["proxies", input.proxies] as const]) {
 			if (value !== undefined) {
 				await writeFile(join(dir, key), value, { mode: 0o600 });
 				files.push("--file-local", `/secrets/${key}=${join(dir, key)}`);
@@ -142,30 +146,39 @@ export async function probe(
 			"-C",
 			"sh -c 'command -v setpriv >/dev/null && command -v timeout >/dev/null && command -v unshare >/dev/null && mkdir -p /work/scratch /secrets && cp /root/probe /work/probe && chmod 555 /work/probe && chown -R 65534:65534 /secrets && chmod 700 /root && chmod 400 /root/as-runner.sh /root/env'",
 		]);
-		const result = await assertProbe(input.control, async (value, network) => {
-			const request = {
-				by: input.control.known.By,
-				value,
-				session: input.session === undefined ? "" : "/secrets/session",
-				proxies: input.proxies === undefined ? "" : "/secrets/proxies",
-			};
-			await writeFile(join(dir, "exec.json"), JSON.stringify(request), { mode: 0o600 });
-			await host(["ssh", "sftp", "put", join(dir, "exec.json"), "/root/exec.json", "--app", "nr-probe", "--machine", machine as string]);
-			const started = performance.now();
-			const output = await host([
-				"ssh",
-				"console",
-				"--app",
-				"nr-probe",
-				"--machine",
-				machine as string,
-				"-C",
-				`sh -c 'chmod 400 /root/exec.json && /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 35 ${network ? "" : "/usr/bin/unshare --net "}/bin/bash /root/as-runner.sh /usr/bin/env NR_SIGNUP_BUILD_VERSION=${input.head} /work/probe lookup ${input.connector} </root/exec.json; code=$?; printf "\\nNRPROBE_STATUS %s\\n" "$code"'`,
-			]);
-			const match = /\nNRPROBE_STATUS (\d+)\s*$/.exec(output);
-			if (match?.[1] !== "0") throw new Error("Candidate RPC has no successful runner exit");
-			return { output: JSON.parse(output.slice(0, match.index)), elapsedMs: performance.now() - started };
-		});
+		const results: Record<string, Awaited<ReturnType<typeof assertProbe>>> = {};
+		for (const target of input.targets) {
+			const by = target.trusted[0]?.by ?? target.control.known.By;
+			results[target.connector] = await assertProbe(
+				target.control,
+				async (value, network) => {
+					const request = {
+						by,
+						value,
+						session: target.session === undefined ? "" : `/secrets/session_${target.connector}`,
+						proxies: input.proxies === undefined ? "" : "/secrets/proxies",
+					};
+					await writeFile(join(dir, "exec.json"), JSON.stringify(request), { mode: 0o600 });
+					await host(["ssh", "sftp", "put", join(dir, "exec.json"), "/root/exec.json", "--app", "nr-probe", "--machine", machine as string]);
+					const started = performance.now();
+					const output = await host([
+						"ssh",
+						"console",
+						"--app",
+						"nr-probe",
+						"--machine",
+						machine as string,
+						"-C",
+						`sh -c 'chmod 400 /root/exec.json && /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/timeout --kill-after=5s 35 ${network ? "" : "/usr/bin/unshare --net "}/bin/bash /root/as-runner.sh /usr/bin/env NR_SIGNUP_BUILD_VERSION=${input.head} /work/probe lookup ${target.connector} </root/exec.json; code=$?; printf "\\nNRPROBE_STATUS %s\\n" "$code"'`,
+					]);
+					const match = /\nNRPROBE_STATUS (\d+)\s*$/.exec(output);
+					if (match?.[1] !== "0") throw new Error("Candidate RPC has no successful runner exit");
+					return { output: JSON.parse(output.slice(0, match.index)), elapsedMs: performance.now() - started };
+				},
+				target.trusted,
+			);
+		}
+		const result = results;
 		return { head: input.head, region: "iad", binary_sha256: createHash("sha256").update(binary).digest("hex"), result };
 	} catch (error) {
 		if (error instanceof FactoryFailure) throw error;

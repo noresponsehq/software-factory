@@ -13,6 +13,7 @@ GitHub marker / assigned Linear / D1 health
   ├─ host validates and publishes candidate tree
   ├─ fresh Claude Code verification in another Render sandbox
   ├─ third sandbox pins main controls and builds lookup RPC
+  ├─ fourth sandbox runs regression tests on untouched main
   ├─ trusted host runs the probe on Fly iad
   ├─ ready PR → expected-head auto-merge → CI repairs
   └─ release SHA + production search → Linear completion
@@ -100,8 +101,33 @@ pin rejects changes to Known declarations and referenced constants. The host
 checks required fields, five positive/absent trials, end-to-end latency and a
 separate network namespace failure control. Guest pass/verdict JSON is rejected.
 Trusted main tests and independent Claude review remain additional gates.
-New connectors and supplied controls without a trusted approval source are
-blocked, a partial capability tracked by [NOR-1489](https://linear.app/noresponse/issue/NOR-1489/supply-approved-controls-to-autonomous-connector-probes).
+
+Trusted controls come from the connector ledger: the host reads
+`GET /ledger/controls/{connector}` with its operator bearer, which no guest
+holds. A control states the identifier, the variant (present, absent, private,
+suspended, renamed, regional), the subject the account must answer with, typed
+expected values, its provenance and its freshness. When the ledger holds
+controls for a connector they replace its declared ones, so new connectors and
+supplied email and phone controls can be probed. The host fails a reading whose
+subject differs (`subject_mismatch`) or whose value differs (`value_mismatch`),
+and blocks before any lookup on a control past its freshness (`stale_control`),
+one not written by the operator (`untrusted_control`), or a connector with
+neither ledger controls nor a pinned declaration (`missing_trusted_control`).
+Probe evidence pins each control's ledger revision and never its values.
+An exact repetition of the lookup identifier is not independent subject proof.
+The private RPC redacts that identifier. The host records any subject or
+expected text equal to it as unchecked `input_echo`, both in the probe result
+and the bundle's uncovered list. Found/absent, fields, network failures and
+independent subject or value assertions still apply. The factory injects its
+own `policy`, `control` and `lookup` RPC entry point into the trusted build;
+these are not required commands on the public probe CLI.
+
+A change outside one connector folder takes the shared recipe. Go packages
+under `apps/identity/internal/` may change, except `internal/connector`, which
+holds the control assertions, and the probe harness. The host overlays every
+changed package, lists dependencies with `go list` (which runs no candidate
+code) and probes every connector whose package depends on a changed one, each
+against its own controls. A change that reaches more than 25 connectors blocks.
 
 Production verification independently resolves and fetches the complete default
 branch revision. This pins the operator script, helpers, regression suite and
@@ -111,13 +137,24 @@ with the five-identity sample; it is not exhaustive provider coverage. Both
 version reads and the search summary must identify the release under proof.
 A partial search, rollback or missing evidence cannot close Linear.
 
+After production verification and resource cleanup, the host settles the run
+as completed before it closes Linear. It reads
+`GET /ledger/factory/acceptance?linear_issue=NOR-<n>` with the operator credential
+and requires acceptance for that run's merge SHA. Only the state named `Done`
+is selected. A Linear outage leaves the durable completion intact; terminal
+task replay and intake reconcile the closure without another paid run. Intake
+includes issues in `Merged` until that reconciliation succeeds.
+
 That smoke does not prove the task's connector. Each candidate commits an
 acceptance recipe at `apps/identity/internal/connectors/<id>/acceptance.json`
 (`app/connectors/acceptance.ts`): the behaviour changed, fixtures, required
 session and route, the public operation, the expected execution and fields,
 the ledger revision followers must report, and uncovered conditions.
-Production reads the recipe from the merge commit, polls the API and worker
-`/healthz` until both report that ledger revision, adds the fixture as a
+Production reads the recipe from the merge commit and polls the operator-only
+`/ledger/machines` route. Both production apps must have recent machine reports,
+and every machine must report the observed release build and required ledger
+revision. Missing apps, old builds and reports older than five minutes fail
+closed; the probe's Fly credential is never used for production SSH. It adds the fixture as a
 person through the public API, and passes only when the person's
 `lookup.records` hold a record from that connector with every expected field
 and no lookup check lists the connector as unanswered. Each failure is typed
@@ -150,8 +187,11 @@ sensitive keeps only its digest and is listed as uncovered. A ledger outage
 fails the run.
 
 The verifier names its negative control as connector test files and a
-`go test -run` pattern. The host copies those files onto the trusted base, where
-the pattern must fail, and runs it on the candidate, where it must pass. The
+`go test -run` pattern. The host copies those files into a separate, untouched
+checkout of the trusted base as readable runner files. Structured Go output must
+show the same named tests failing on that base and passing on the candidate.
+Build failures, skipped tests, empty selections and permission errors cannot
+serve as negative evidence. Both logs are retained, including refused runs. The
 host, not the agent summary, refuses a review or production proof whose bundle
 is missing, malformed, for another revision, failing, without passing
 assertions or uploaded artifacts, or, for a candidate, without a valid negative

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { released } from "../app/connectors/release.js";
-import { connectorScope } from "../app/connectors/trusted-build.js";
+import { changeScope } from "../app/connectors/trusted-build.js";
 import type { GitHubHttp } from "../app/github/index.js";
 
 const head = "a".repeat(40);
@@ -25,7 +25,7 @@ describe("trusted connector validation", () => {
 			"apps/identity/internal/connector/known_test.go",
 			"apps/identity/internal/connectors/github/../other/x.go",
 		])
-			expect(() => connectorScope([path], "github")).toThrow();
-		expect(() => connectorScope(["apps/identity/internal/connectors/github/github.go"], "github")).not.toThrow();
+			expect(() => changeScope([path], "github")).toThrow();
+		expect(() => changeScope(["apps/identity/internal/connectors/github/github.go"], "github")).not.toThrow();
 	});
 });

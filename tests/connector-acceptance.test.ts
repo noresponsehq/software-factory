@@ -84,6 +84,7 @@ describe("production acceptance", () => {
 	it("records a superseded release and passes only with fresh proof against the observed build", async () => {
 		const p = ports({ version: vi.fn(async () => B) });
 		expect(await proveRelease(A, recipe, p)).toMatchObject({ sha: A, release_state: "superseded", requested: A, observed: B });
+		expect(p.revisions).toHaveBeenCalledWith(B);
 		expect(p.smoke).toHaveBeenCalledWith(B);
 		expect(p.lookup).toHaveBeenCalledTimes(1);
 	});

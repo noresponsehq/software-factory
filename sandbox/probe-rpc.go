@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/noresponsehq/noresponse/apps/identity/internal/connector"
@@ -13,6 +14,21 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "policy" {
+		_ = json.NewEncoder(os.Stdout).Encode(struct {
+			Trials     int   `json:"trials"`
+			AdmittedMS int64 `json:"admitted_ms"`
+		}{connector.Trials, connector.Admitted.Milliseconds()})
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "connectors" {
+		ids := []string{}
+		for _, declaration := range connectors.All {
+			ids = append(ids, declaration.ID)
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(ids)
+		return
+	}
 	if len(os.Args) != 3 {
 		os.Exit(2)
 	}
@@ -41,7 +57,7 @@ func main() {
 		Session string `json:"session"`
 		Proxies string `json:"proxies"`
 	}
-	if json.NewDecoder(io.LimitReader(os.Stdin, 65536)).Decode(&request) != nil {
+	if json.NewDecoder(io.LimitReader(os.Stdin, 65536)).Decode(&request) != nil || request.Value == "" {
 		os.Exit(2)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -62,5 +78,17 @@ func main() {
 	}
 	defer closeAll()
 	result := lookUp(ctx, asker, connector.Query{By: request.By, Value: request.Value})
+	result.Cause = ""
+	redact := func(value string) string {
+		return secrets.scrub(strings.ReplaceAll(value, request.Value, "[redacted]"))
+	}
+	for field, values := range result.Values {
+		for i, value := range values {
+			result.Values[field][i] = redact(value)
+		}
+	}
+	for i, source := range result.Sources {
+		result.Sources[i] = redact(source)
+	}
 	_ = json.NewEncoder(os.Stdout).Encode(result)
 }

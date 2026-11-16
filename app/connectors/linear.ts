@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import type { FactoryAcceptance } from "./ledger.js";
 
 export class Linear {
 	constructor(
@@ -41,21 +42,24 @@ export class Linear {
 			.issue.identifier;
 	}
 
-	async complete(identifier: string, evidence: string[]) {
-		if (!evidence.length) throw new Error("Linear completion requires production evidence");
-		const result = await this.query("query($id:String!){issue(id:$id){id team{states{nodes{id type}}}}}", { id: identifier });
+	async complete(identifier: string, merge: string | undefined, acceptance: () => Promise<FactoryAcceptance>) {
+		const accepted = await acceptance();
+		if (!accepted.owned || !accepted.accepted) return false;
+		if (merge !== undefined && accepted.merge_sha !== merge) throw new Error("Factory acceptance names another merge revision");
+		const result = await this.query("query($id:String!){issue(id:$id){id team{states{nodes{id type name}}}}}", { id: identifier });
 		const issue = z
 			.object({
-				issue: z.object({ id: z.string(), team: z.object({ states: z.object({ nodes: z.array(z.object({ id: z.string(), type: z.string() })) }) }) }),
+				issue: z.object({ id: z.string(), team: z.object({ states: z.object({ nodes: z.array(z.object({ id: z.string(), type: z.string(), name: z.string() })) }) }) }),
 			})
 			.parse(result).issue;
-		const completed = issue.team.states.nodes.find((s) => s.type === "completed");
-		if (!completed) throw new Error("Linear team has no completed state");
+		const completed = issue.team.states.nodes.find((s) => s.type === "completed" && s.name === "Done");
+		if (!completed) throw new Error("Linear team has no completed state named Done");
 		const updated = await this.query("mutation($id:String!,$state:String!){issueUpdate(id:$id,input:{stateId:$state}){success}}", {
 			id: issue.id,
 			state: completed.id,
 		});
 		if (!z.object({ issueUpdate: z.object({ success: z.literal(true) }) }).safeParse(updated).success)
 			throw new Error("Linear did not confirm completion");
+		return true;
 	}
 }

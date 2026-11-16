@@ -19,6 +19,7 @@ describe("host refusal of a verification bundle", () => {
 		["no uploaded artifacts", (b) => ({ ...b, artifacts: [] }), /artifacts/],
 		["an artifact without a digest", (b) => ({ ...b, artifacts: [{ ...b.artifacts[0], sha256: "x" }] }), /missing/],
 		["no negative control", (b) => ({ ...b, negative_control: null }), /negative control/],
+		["no named failed and passing tests", (b) => ({ ...b, negative_control: { ...b.negative_control, tests: [] } }), /malformed/],
 		[
 			"a control that passed unfixed code",
 			(b) => ({ ...b, negative_control: { ...b.negative_control, unfixed: { sha: base, exit_code: 0 } } }),
@@ -79,13 +80,23 @@ describe("artifact upload", () => {
 });
 
 describe("paired negative control", () => {
-	const fakeSandbox = (exitCode: number) => {
+	const events = (action: string, test = "TestMissing") => ["run", action].map((Action) => JSON.stringify({ Action, Package: "github", Test: test })).join("\n");
+	const fakeSandbox = (exitCode: number, output = events(exitCode ? "fail" : "pass"), dirty = "") => {
 		const files = new Map<string, Buffer>();
 		return {
 			files,
 			sandbox: {
 				id: "s",
-				exec: vi.fn(async (command: string) => ({ exitCode: command.startsWith("mkdir") ? 0 : exitCode, stdout: `ran ${exitCode}`, stderr: "" })),
+				exec: vi.fn(async (command: string) => {
+					if (command === "git rev-parse HEAD") return { exitCode: 0, stdout: exitCode ? base : head, stderr: "" };
+					if (command.startsWith("git status")) return { exitCode: 0, stdout: dirty, stderr: "" };
+					if (command.includes("go test")) return { exitCode, stdout: output, stderr: "" };
+					if (command.startsWith("cp ")) {
+						const paths = [...command.matchAll(/'([^']*)'/g)].map((match) => match[1]);
+						files.set(paths[1] as string, files.get(paths[0] as string) as Buffer);
+					}
+					return { exitCode: 0, stdout: "", stderr: "" };
+				}),
 				upload: vi.fn(async (path: string, data: string | Buffer) => {
 					files.set(path, Buffer.from(data));
 				}),
@@ -132,5 +143,27 @@ describe("paired negative control", () => {
 		).toEqual({
 			refused: "verifier supplied no negative control",
 		});
+	});
+	it.each([
+		["permission denied", events("pass")],
+		[JSON.stringify({ Action: "fail", Package: "github" }), events("pass")],
+		[events("fail"), events("pass", "TestOther")],
+		[events("fail"), events("skip")],
+		[`${events("fail")}\n${JSON.stringify({ Action: "build-fail" })}`, events("pass")],
+	])("refuses harness failures or unmatched test events %s", async (before, after) => {
+		const result = await pairedNegativeControl(
+			{ test_paths: ["apps/identity/internal/connectors/github/github_test.go"], run: "TestMissing" }, "github",
+			{ sandbox: fakeSandbox(1, before).sandbox, sha: base }, { sandbox: fakeSandbox(0, after).sandbox, sha: head },
+		);
+		expect(result).toMatchObject({ refused: expect.stringMatching(/named test/), logs: expect.arrayContaining([expect.objectContaining({ name: "negative-control/unfixed.log" })]) });
+	});
+	it("refuses an already overlaid baseline before uploading tests", async () => {
+		const baseline = fakeSandbox(1, events("fail"), " M apps/identity/internal/connectors/github/github.go");
+		const result = await pairedNegativeControl(
+			{ test_paths: ["apps/identity/internal/connectors/github/github_test.go"], run: "TestMissing" }, "github",
+			{ sandbox: baseline.sandbox, sha: base }, { sandbox: fakeSandbox(0).sandbox, sha: head },
+		);
+		expect(result).toMatchObject({ refused: expect.stringMatching(/untouched/) });
+		expect(baseline.sandbox.upload).not.toHaveBeenCalled();
 	});
 });

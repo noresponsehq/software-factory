@@ -7,7 +7,7 @@ const fake = vi.hoisted(() => ({
 	finishes: [] as { outcome: string }[],
 	result: "blocked" as "blocked" | "completed" | "waiting" | "prepare",
 	unresolved: true,
-	complete: vi.fn(async () => {}),
+	complete: vi.fn(async () => true),
 	terminate: vi.fn(async () => {}),
 	open: vi.fn(),
 }));
@@ -51,7 +51,10 @@ vi.mock("../app/connectors/lifecycle.js", () => ({
 			async () => false,
 		);
 		if (fake.result === "blocked") await ports.block("Independent verification failed");
-		if (fake.result === "completed") await ports.closeLinear(["proof"]);
+		if (fake.result === "completed") {
+			await ports.checkpoint({ phase: "production_verified", merge_sha: "a".repeat(40) });
+			await ports.closeLinear(["proof"]);
+		}
 		return fake.result;
 	},
 }));
@@ -74,7 +77,7 @@ const input = {
 function service() {
 	fake.state = { version: 0, phase: "research", resource_charges: [], evidence_ids: [], cleanup_only: false };
 	fake.finishes = [];
-	fake.complete.mockClear();
+	fake.complete.mockReset().mockResolvedValue(true);
 	fake.terminate.mockClear();
 	fake.unresolved = true;
 	vi.stubGlobal(
@@ -87,6 +90,8 @@ function service() {
 				return Response.json({ status: body.outcome });
 			}
 			if (action === "heartbeat") {
+				if (body.phase) fake.state.phase = body.phase;
+				if (body.merge_sha) fake.state.merge_sha = body.merge_sha;
 				for (const resource of body.resource_charges ?? []) {
 					const at = fake.state.resource_charges.findIndex((r) => r.key === resource.key);
 					if (at < 0) fake.state.resource_charges.push(resource);
@@ -119,6 +124,21 @@ it.each(["blocked", "completed"] as const)("settles %s only after provider termi
 	expect(await runConnector(input)).toMatchObject({ status: result });
 	expect(fake.finishes).toEqual([expect.objectContaining({ outcome: result })]);
 	expect(fake.complete).toHaveBeenCalledTimes(result === "completed" ? 1 : 0);
+});
+it("settles durably before issue closure and leaves a failed closure replayable", async () => {
+	service();
+	fake.result = "completed";
+	fake.unresolved = false;
+	fake.complete.mockImplementationOnce(async () => {
+		expect(fake.finishes).toEqual([expect.objectContaining({ outcome: "completed" })]);
+		throw new Error("Linear unavailable");
+	});
+	expect(await runConnector(input)).toMatchObject({ status: "completion_pending" });
+	expect(fake.finishes).toHaveLength(1);
+	vi.mocked(fetch).mockResolvedValueOnce(Response.json({ status: "completed", state: { merge_sha: "a".repeat(40) } }));
+	expect(await runConnector(input)).toMatchObject({ status: "completed" });
+	expect(fake.complete).toHaveBeenCalledTimes(2);
+	expect(fake.finishes).toHaveLength(1);
 });
 it("terminates a restored sandbox during preparation when ownership is lost", async () => {
 	service();

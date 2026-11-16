@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { EvidenceRefused } from "./bundle.js";
+import { TrustedControls } from "./trusted-controls.js";
 
 export const Phase = z.enum(["research", "implementation", "review", "ci", "release", "production_verified"]);
 export const Resource = z.strictObject({
@@ -32,6 +33,16 @@ const Reported = z.object({
 });
 export const State = Reported.required({ cleanup_only: true, resource_charges: true, evidence_ids: true });
 export type State = z.infer<typeof State>;
+export const FactoryAcceptance = z.union([
+	z.strictObject({ owned: z.literal(false) }),
+	z.strictObject({ owned: z.literal(true), accepted: z.literal(false) }),
+	z.strictObject({ owned: z.literal(true), accepted: z.literal(true), merge_sha: z.string().regex(/^[a-f0-9]{40}$/) }),
+]);
+export type FactoryAcceptance = z.infer<typeof FactoryAcceptance>;
+export const Machines = z.object({
+	machines: z.array(z.object({ machine: z.string(), app: z.string(), build: z.string(), rev: z.number().int().nonnegative(), seen_at: z.string().datetime({ offset: true }) })),
+	rev: z.number().int().nonnegative(),
+});
 export function mergeState(known: State, reported: z.infer<typeof Reported>): State {
 	return {
 		...reported,
@@ -66,7 +77,7 @@ export const ClaimResult = z.union([
 	z.object({
 		status: z.enum(["blocked", "failed", "completed"]),
 		reason: z.string().optional(),
-		state: z.object({ reason: z.string().nullable().optional() }).nullable().optional(),
+		state: z.object({ reason: z.string().nullable().optional(), merge_sha: z.string().regex(/^[a-f0-9]{40}$/).nullable().optional() }).nullable().optional(),
 	}),
 ]);
 
@@ -94,6 +105,10 @@ export class Ledger {
 	}
 	async claim(input: z.infer<typeof ClaimInput>) {
 		return ClaimResult.parse(await this.call("claim", ClaimInput.parse(input)));
+	}
+	async acceptance(issue: string) {
+		const identifier = z.string().regex(/^NOR-\d+$/).parse(issue);
+		return FactoryAcceptance.parse(await this.call(`acceptance?linear_issue=${identifier}`));
 	}
 	async own(result: z.infer<typeof ClaimResult>, leaseSeconds: number): Promise<Claimed | null> {
 		if (result.status !== "claimed") return null;
@@ -125,6 +140,32 @@ export class Ledger {
 		if (result.run_id !== claim.run_id) throw new Error("Factory lease changed owner");
 		const { state, ...envelope } = result;
 		Object.assign(claim, envelope, { state: mergeState(claim.state, state) });
+	}
+	async controls(connector: string) {
+		const response = await this.request(
+			`${this.url.replace(/\/$/, "")}/ledger/controls/${z
+				.string()
+				.regex(/^[a-z0-9_]+$/)
+				.parse(connector)}`,
+			{
+				method: "GET",
+				headers: { Authorization: `Bearer ${this.operatorToken}`, "Content-Type": "application/json" },
+				signal: AbortSignal.timeout(30000),
+				redirect: "error",
+			},
+		);
+		if (!response.ok) throw new Error(`Factory ledger controls returned ${response.status}`);
+		return TrustedControls.parse(await response.json()).controls;
+	}
+	async machines() {
+		const response = await this.request(`${this.url.replace(/\/$/, "")}/ledger/machines`, {
+			method: "GET",
+			headers: { Authorization: `Bearer ${this.operatorToken}` },
+			signal: AbortSignal.timeout(30000),
+			redirect: "error",
+		});
+		if (!response.ok) throw new Error(`Factory ledger machines returned ${response.status}`);
+		return Machines.parse(await response.json());
 	}
 	async evidence(
 		claim: Claimed,
