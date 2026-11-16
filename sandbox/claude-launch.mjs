@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, mkdirSync, chownSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, mkdirSync, chownSync, chmodSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const rootEnv = { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" };
@@ -27,6 +27,7 @@ if (process.argv[2] === "--child") {
 	const dir = process.argv[2];
 	const input = JSON.parse(readFileSync(`${dir}/input.json`, "utf8"));
 	rmSync(`${dir}/input.json`);
+	chmodSync(process.argv[1], 0o444);
 	if (!Number.isInteger(input.seconds) || input.seconds < 1 || input.seconds > 3600) process.exit(1);
 	const home = `${dir}/home`;
 	mkdirSync(home, { mode: 0o700 });
