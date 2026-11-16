@@ -100,8 +100,26 @@ pin rejects changes to Known declarations and referenced constants. The host
 checks required fields, five positive/absent trials, end-to-end latency and a
 separate network namespace failure control. Guest pass/verdict JSON is rejected.
 Trusted main tests and independent Claude review remain additional gates.
-New connectors and supplied controls without a trusted approval source are
-blocked, a partial capability tracked by [NOR-1489](https://linear.app/noresponse/issue/NOR-1489/supply-approved-controls-to-autonomous-connector-probes).
+
+Trusted controls come from the connector ledger: the host reads
+`GET /ledger/controls/{connector}` with its operator bearer, which no guest
+holds. A control states the identifier, the variant (present, absent, private,
+suspended, renamed, regional), the subject the account must answer with, typed
+expected values, its provenance and its freshness. When the ledger holds
+controls for a connector they replace its declared ones, so new connectors and
+supplied email and phone controls can be probed. The host fails a reading whose
+subject differs (`subject_mismatch`) or whose value differs (`value_mismatch`),
+and blocks before any lookup on a control past its freshness (`stale_control`),
+one not written by the operator (`untrusted_control`), or a connector with
+neither ledger controls nor a pinned declaration (`missing_trusted_control`).
+Probe evidence pins each control's ledger revision and never its values.
+
+A change outside one connector folder takes the shared recipe. Go packages
+under `apps/identity/internal/` may change, except `internal/connector`, which
+holds the control assertions, and the probe harness. The host overlays every
+changed package, lists dependencies with `go list` (which runs no candidate
+code) and probes every connector whose package depends on a changed one, each
+against its own controls. A change that reaches more than 25 connectors blocks.
 
 Production verification independently resolves and fetches the complete default
 branch revision. This pins the operator script, helpers, regression suite and

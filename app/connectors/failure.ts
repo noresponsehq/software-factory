@@ -9,4 +9,12 @@ export class FactoryFailure extends Error {
 		super(`Factory ${kind} failed`);
 	}
 }
-export class FactoryBlocked extends Error {}
+export type BlockedReason = "stale_control" | "untrusted_control" | "missing_trusted_control" | "paid_lookup_allowance" | "policy";
+export class FactoryBlocked extends Error {
+	constructor(
+		message: string,
+		readonly reason: BlockedReason = "policy",
+	) {
+		super(message);
+	}
+}
