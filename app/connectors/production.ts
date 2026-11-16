@@ -239,6 +239,7 @@ export async function groupPersonLookup(
 	readControls: (connector: string) => Promise<unknown> = (id) => new Ledger(requireEnv("NR_LEDGER_URL"), requireEnv("NR_FACTORY_OPERATOR_TOKEN")).controls(id),
 ) {
 	const identity = await resolveFixture(recipe, readControls);
+	try {
 	const group = z
 		.object({ id: z.string() })
 		.parse(await publicJson("/v1/groups", { method: "POST", body: { name: `nr-tmp-proof-${recipe.connector}` } }));
@@ -255,6 +256,9 @@ export async function groupPersonLookup(
 		return null;
 	} finally {
 		await publicJson(`/v1/people/${person}`, { method: "DELETE" }).catch(() => undefined);
+	}
+	} catch {
+		throw proofFailure("lookup_unavailable");
 	}
 }
 
