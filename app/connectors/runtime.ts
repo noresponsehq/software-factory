@@ -41,8 +41,17 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 	const gh = githubFor(repo);
 	if (!["write", "maintain", "admin"].includes(await gh.getPermission(input.actor))) throw new Error("Connector actor lacks write permission");
 	const ledger = new Ledger(requireEnv("NR_LEDGER_URL"), requireEnv("NR_FACTORY_OPERATOR_TOKEN"));
+	const closeAccepted = async (merge: string | null | undefined) => {
+		if (!merge) throw new Error("Completed factory run lacks merge revision");
+		if (!(await new Linear(requireEnv("LINEAR_API_KEY")).complete(input.linear_issue, merge, () => ledger.acceptance(input.linear_issue))))
+			throw new Error("Ledger has not accepted factory production completion");
+	};
 	const { repo: _repo, installation_id: _installation, actor: _actor, task: _task, ...claimInput } = input;
 	const claimed = await ledger.claim(claimInput);
+	if (claimed.status === "completed") {
+		await closeAccepted(claimed.state?.merge_sha);
+		return claimed;
+	}
 	if (claimed.status !== "claimed") return claimed;
 	const claim = await ledger.own(claimed, input.lease_seconds);
 	if (!claim) return { status: "already_active", run_id: claimed.run_id };
@@ -50,6 +59,7 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 	const lease = new Lease(ledger, claim, input.lease_seconds, executionSeconds);
 	const checkpoint = (patch = {}) => lease.checkpoint(patch);
 	const budget = new Budget(claim, lease);
+	let completed = false;
 	const cleanupPending = () =>
 		claim.state.resource_charges.some((resource) => resource.kind !== "render_workflow_flex" && resource.status !== "terminated");
 	const requireCleanup = () => {
@@ -368,7 +378,10 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 								negative_control: negative?.control ?? null,
 								artifacts: uploaded.artifacts,
 								harness,
-								uncovered: [...("refused" in probeResult.negative ? [probeResult.negative.refused] : []), ...uploaded.uncovered].slice(0, 50),
+								uncovered: [
+									...Object.entries(probeResult.probe.result).flatMap(([connector, result]) => result.unchecked.map((item) => `${connector} ${item.field} at control revision ${item.control_rev}: input echo, not independently checked`)),
+									...("refused" in probeResult.negative ? [probeResult.negative.refused] : []), ...uploaded.uncovered,
+								].slice(0, 50),
 							};
 							const bundleReceipt = await evidence(candidate.head, "verification", { status: proven ? "pass" : "fail", bundle });
 							const refusal = bundleRefusal(bundle, { stage: "candidate", sha: candidate.head });
@@ -482,11 +495,13 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 					const receipt = await evidence(merge, "production", { ...proof, release_url: release.url });
 					return { status: "passed", sha: merge, evidence: [receipt], bundle: proof.bundle };
 				},
-				closeLinear: async (evidence) =>
-					lease.exclusive(() => {
-						requireCleanup();
-						return new Linear(requireEnv("LINEAR_API_KEY")).complete(input.linear_issue, evidence);
-					}),
+				closeLinear: async () => {
+					requireCleanup();
+					await lease.stop();
+					await finish("completed", "Production verified");
+					completed = true;
+					await closeAccepted(claim.state.merge_sha);
+				},
 				block: async (reason) => {
 					await finish("blocked", reason);
 				},
@@ -498,9 +513,9 @@ export async function runConnector(raw: unknown, executionSeconds = 14400) {
 			await lease.stop();
 			await lease.exclusive(() => ledger.heartbeat(claim, 30));
 		}
-		if (result === "completed") await finish("completed", "Production verified");
 		return { status: result, run_id: claim.run_id, phase: claim.state.phase };
 	} catch (error) {
+		if (completed) return { status: "completion_pending", run_id: claim.run_id, phase: claim.state.phase };
 		if (lease.signal.aborted) return { status: "ownership_lost", run_id: claim.run_id };
 		if (cleanupPending()) return { status: "cleanup_pending", run_id: claim.run_id };
 		const head = claim.state.merge_sha ?? claim.state.head_sha;

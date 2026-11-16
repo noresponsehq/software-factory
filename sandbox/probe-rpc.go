@@ -61,6 +61,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	secrets := &scrubber{}
+	secrets.add(request.Value)
 	inputs, err := readSession(request.Session, id, declaration.Need, secrets)
 	if err != nil {
 		os.Exit(2)
@@ -77,5 +78,6 @@ func main() {
 	}
 	defer closeAll()
 	result := lookUp(ctx, asker, connector.Query{By: request.By, Value: request.Value})
-	_ = json.NewEncoder(os.Stdout).Encode(result)
+	result.Cause = ""
+	_ = json.NewEncoder(secrets.writer(os.Stdout)).Encode(result)
 }

@@ -114,6 +114,13 @@ and blocks before any lookup on a control past its freshness (`stale_control`),
 one not written by the operator (`untrusted_control`), or a connector with
 neither ledger controls nor a pinned declaration (`missing_trusted_control`).
 Probe evidence pins each control's ledger revision and never its values.
+An exact repetition of the lookup identifier is not independent subject proof.
+The private RPC redacts that identifier. The host records any subject or
+expected text equal to it as unchecked `input_echo`, both in the probe result
+and the bundle's uncovered list. Found/absent, fields, network failures and
+independent subject or value assertions still apply. The factory injects its
+own `policy`, `control` and `lookup` RPC entry point into the trusted build;
+these are not required commands on the public probe CLI.
 
 A change outside one connector folder takes the shared recipe. Go packages
 under `apps/identity/internal/` may change, except `internal/connector`, which
@@ -129,6 +136,14 @@ repository code executes. The trusted runbook command selects `version,search`
 with the five-identity sample; it is not exhaustive provider coverage. Both
 version reads and the search summary must identify the release under proof.
 A partial search, rollback or missing evidence cannot close Linear.
+
+After production verification and resource cleanup, the host settles the run
+as completed before it closes Linear. It reads
+`GET /ledger/factory/acceptance?linear_issue=NOR-<n>` with the operator credential
+and requires acceptance for that run's merge SHA. Only the state named `Done`
+is selected. A Linear outage leaves the durable completion intact; terminal
+task replay and intake reconcile the closure without another paid run. Intake
+includes issues in `Merged` until that reconciliation succeeds.
 
 That smoke does not prove the task's connector. Each candidate commits an
 acceptance recipe at `apps/identity/internal/connectors/<id>/acceptance.json`

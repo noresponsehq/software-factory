@@ -47,6 +47,13 @@ export async function assertProbe(
 	trusted: TrustedControl[] = [],
 ) {
 	const cases = casesOf(control, trusted);
+	const unchecked = cases.flatMap((c) => {
+		const fields = new Set([
+			...(c.subject?.value === c.value ? [c.subject.field] : []),
+			...Object.entries(c.expected).filter(([, expected]) => expected.type === "text" && expected.value === c.value).map(([field]) => field),
+		]);
+		return [...fields].map((field) => ({ field, control_rev: c.rev, reason: "input_echo" as const }));
+	});
 	let checks = 0;
 	const times: number[] = [];
 	const fail = (reason: string, extra: Record<string, unknown> = {}) =>
@@ -57,8 +64,8 @@ export async function assertProbe(
 			const reading = Reading.parse(response.output);
 			if (reading.error || reading.found !== c.found) throw fail("trusted_control_assertion");
 			if (c.found && control.known.Fields.some((field) => !reading.fields.includes(field))) throw fail("trusted_control_assertion");
-			if (c.subject && !reading.values?.[c.subject.field]?.includes(c.subject.value)) throw fail("subject_mismatch", { field: c.subject.field });
-			const wrong = Object.entries(c.expected).find(([field, expected]) => !matches(expected, reading.values?.[field]));
+			if (c.subject && c.subject.value !== c.value && !reading.values?.[c.subject.field]?.includes(c.subject.value)) throw fail("subject_mismatch", { field: c.subject.field });
+			const wrong = Object.entries(c.expected).find(([field, expected]) => !(expected.type === "text" && expected.value === c.value) && !matches(expected, reading.values?.[field]));
 			if (wrong) throw fail("value_mismatch", { field: wrong[0] });
 			times.push(response.elapsedMs);
 			checks++;
@@ -78,6 +85,7 @@ export async function assertProbe(
 		trials: control.trials,
 		p95_ms: p95,
 		control_revs: cases.flatMap((c) => (c.rev === undefined ? [] : [c.rev])),
+		unchecked,
 		verdict_owner: "trusted_host",
 	};
 }

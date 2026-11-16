@@ -103,6 +103,19 @@ describe("trusted controls from the ledger", () => {
 		expect(await reasonOf(assertProbe(control, lookup))).toBe("missing_trusted_control");
 		expect(lookup).not.toHaveBeenCalled();
 	});
+	it("records an input-echo subject as unchecked while retaining found and independent-value assertions", async () => {
+		const echo = trusted({ subject: { field: "email", value: "owner@example.org" }, expected: { email: { type: "text", value: "owner@example.org" }, id: { type: "text", value: "12345" } } });
+		const lookup = async (value: string, network: boolean) => value === echo.value && network
+			? { output: observed({ email: ["[redacted]"], id: ["12345"], username: ["owner"], followers: ["7"], name: ["O"] }), elapsedMs: 1 }
+			: honest(value, network);
+		const result = await assertProbe(control, lookup, pinControls("gravatar", [echo, absent], NOW));
+		expect(result).toMatchObject({ status: "pass", unchecked: [{ field: "email", control_rev: 41, reason: "input_echo" }] });
+		expect(JSON.stringify(result)).not.toContain(echo.value);
+		const wrong = async (value: string, network: boolean) => value === echo.value && network
+			? { output: observed({ email: ["[redacted]"], id: ["wrong"], username: ["owner"], followers: ["7"], name: ["O"] }), elapsedMs: 1 }
+			: honest(value, network);
+		expect(await reasonOf(assertProbe(control, wrong, [echo, absent]))).toBe("value_mismatch");
+	});
 });
 
 describe("shared adapter recipe", () => {

@@ -31,7 +31,7 @@ export async function intake(start: (input: object, key: string, task?: "connect
 	for (let page = 0; ; page++) {
 		if (page >= 100) throw new Error("Assigned Linear issues exceed bounded pagination");
 		const assigned = await linear.query(
-			'query($assignee:ID!,$after:String){issues(first:100,after:$after,filter:{assignee:{id:{eq:$assignee}},state:{type:{nin:["completed","canceled"]}}}){nodes{identifier title description updatedAt} pageInfo{hasNextPage endCursor}}}',
+			'query($assignee:ID!,$after:String){issues(first:100,after:$after,filter:{assignee:{id:{eq:$assignee}},state:{type:{neq:"canceled"},name:{neq:"Done"}}}){nodes{identifier title description updatedAt} pageInfo{hasNextPage endCursor}}}',
 			{ assignee: requireEnv("FACTORY_LINEAR_ASSIGNEE"), after: cursor },
 		);
 		const result = z
@@ -47,6 +47,7 @@ export async function intake(start: (input: object, key: string, task?: "connect
 	for (const issue of issues) {
 		const connector = marker(issue.description ?? "");
 		if (!connector) continue;
+		if (await linear.complete(issue.identifier, undefined, () => ledger.acceptance(issue.identifier))) continue;
 		const event_id = `linear:${issue.identifier}:${digest(issue.description ?? "")}`;
 		await start(
 			{

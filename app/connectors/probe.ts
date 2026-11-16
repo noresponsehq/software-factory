@@ -71,7 +71,7 @@ export async function probe(
 			proxies: z.string().optional(),
 		})
 		.parse(raw);
-	const build = await sandbox.exec("cd apps/identity && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/factory-probe ./cmd/probe", {
+	const build = await sandbox.exec("cd apps/identity && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -o /tmp/factory-probe ./cmd/probe", {
 		asRunner: true,
 		timeoutMs: 600000,
 	});

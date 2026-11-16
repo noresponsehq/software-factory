@@ -33,6 +33,12 @@ const Reported = z.object({
 });
 export const State = Reported.required({ cleanup_only: true, resource_charges: true, evidence_ids: true });
 export type State = z.infer<typeof State>;
+export const FactoryAcceptance = z.union([
+	z.strictObject({ owned: z.literal(false) }),
+	z.strictObject({ owned: z.literal(true), accepted: z.literal(false) }),
+	z.strictObject({ owned: z.literal(true), accepted: z.literal(true), merge_sha: z.string().regex(/^[a-f0-9]{40}$/) }),
+]);
+export type FactoryAcceptance = z.infer<typeof FactoryAcceptance>;
 export function mergeState(known: State, reported: z.infer<typeof Reported>): State {
 	return {
 		...reported,
@@ -67,7 +73,7 @@ export const ClaimResult = z.union([
 	z.object({
 		status: z.enum(["blocked", "failed", "completed"]),
 		reason: z.string().optional(),
-		state: z.object({ reason: z.string().nullable().optional() }).nullable().optional(),
+		state: z.object({ reason: z.string().nullable().optional(), merge_sha: z.string().regex(/^[a-f0-9]{40}$/).nullable().optional() }).nullable().optional(),
 	}),
 ]);
 
@@ -95,6 +101,10 @@ export class Ledger {
 	}
 	async claim(input: z.infer<typeof ClaimInput>) {
 		return ClaimResult.parse(await this.call("claim", ClaimInput.parse(input)));
+	}
+	async acceptance(issue: string) {
+		const identifier = z.string().regex(/^NOR-\d+$/).parse(issue);
+		return FactoryAcceptance.parse(await this.call(`acceptance?linear_issue=${identifier}`));
 	}
 	async own(result: z.infer<typeof ClaimResult>, leaseSeconds: number): Promise<Claimed | null> {
 		if (result.status !== "claimed") return null;
