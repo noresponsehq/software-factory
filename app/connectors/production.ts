@@ -209,7 +209,7 @@ export async function productionSearch(
 const api = "https://api.noresponse.org";
 export function machineRevisions(report: z.infer<typeof Machines>, build: string, now = Date.now()) {
 	const revision = (app: string) => {
-		const machines = report.machines.filter((machine) => machine.app === app);
+		const machines = report.machines.filter((machine) => machine.app === app || machine.app.startsWith(`${app}-`));
 		if (!machines.length || machines.some((machine) => machine.build !== build || Date.parse(machine.seen_at) > now || now - Date.parse(machine.seen_at) > 300000)) return null;
 		return Math.min(...machines.map((machine) => machine.rev));
 	};

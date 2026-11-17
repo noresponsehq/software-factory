@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"github.com/noresponsehq/noresponse/apps/identity/internal/connector"
 	"github.com/noresponsehq/noresponse/apps/identity/internal/connectors"
 	"log/slog"
@@ -21,7 +22,12 @@ type Lookup struct {
 }
 
 func readSession(string, string, connectors.Need, *scrubber) (any, error) { return nil, nil }
-func readProxies(string, string, *scrubber) (any, error)                  { return nil, nil }
+func readProxies(path string, egress connectors.Egress, _ *scrubber) (any, error) {
+	if egress.Direct() && path != "" || !egress.Direct() && path == "" {
+		return nil, errors.New("wrong proxy path")
+	}
+	return nil, nil
+}
 func bind(context.Context, string, connectors.Need, any, any, *slog.Logger, bool) (any, func(), error) {
 	return nil, func() {}, nil
 }

@@ -10,7 +10,13 @@ vi.mock("../factory.config.js", async () => ({
 	},
 }));
 
-import { ENV_GROUPS, SERVICE_ENV } from "../scripts/lib/requirements.js";
+import { ENV_GROUPS, SECRET_ENV, SERVICE_ENV } from "../scripts/lib/requirements.js";
+
+it("keeps the optional residential proxy secret only in the workflows group", () => {
+	const key = "NR_PROBE_PROXIES_RESIDENTIAL";
+	expect(ENV_GROUPS.filter((group) => [...group.keys, ...(group.optionalKeys ?? [])].includes(key)).map((group) => group.services)).toEqual([["workflows"]]);
+	expect(SECRET_ENV).toContain(key);
+});
 
 it("schedules bounded UTC intake with only dispatch and intake credential groups", () => {
 	const yaml = readFileSync(new URL("../render.yaml", import.meta.url), "utf8");

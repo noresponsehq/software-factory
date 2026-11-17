@@ -157,6 +157,7 @@ export async function probe(
 						value,
 						session: target.session === undefined ? "" : `/secrets/session_${target.connector}`,
 						proxies: input.proxies === undefined ? "" : "/secrets/proxies",
+						proxy_network: input.proxies === undefined ? "" : "residential",
 					};
 					await writeFile(join(dir, "exec.json"), JSON.stringify(request), { mode: 0o600 });
 					await host(["ssh", "sftp", "put", join(dir, "exec.json"), "/root/exec.json", "--app", "nr-probe", "--machine", machine as string]);

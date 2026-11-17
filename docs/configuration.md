@@ -410,3 +410,10 @@ The optional `NR_PROD_WORKER_LOGS_TOKEN` is copied to the workflows group when
 present. It supports production search failure attribution and has no credential
 fallback. `factory-intake` uses a dedicated intake group, polls every five minutes
 UTC and admits the daily dispatch allowance before starting workflow tasks.
+
+`NR_PROBE_PROXIES_RESIDENTIAL` is an optional secret containing a provider proxy
+list in the Identity probe format. Setup copies it only to the workflows group.
+The host sends it to the temporary Fly probe; direct connectors ignore it and
+other network classes cannot use a residential list. A residential connector
+without this list fails explicitly before its lookup. The proxy traffic estimate
+is included in the probe reservation.
