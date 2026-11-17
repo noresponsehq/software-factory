@@ -30,3 +30,12 @@ it("requires both app populations and refuses malformed revisions", () => {
 	expect(machineRevisions({ machines: [worker], rev: 43 }, build, now)).toEqual({ api: null, worker: 42 });
 	expect(Machines.safeParse({ machines: [{ ...api, rev: -1 }], rev: 43 }).success).toBe(false);
 });
+it("includes every restored production app in its API or worker population", () => {
+	const machines = [machine("nr-ii-prod-api-r1"), machine("nr-ii-prod-api-r1", 40), machine("nr-ii-prod-worker-r1", 41)];
+	expect(machineRevisions({ machines, rev: 43 }, build, now)).toEqual({ api: 40, worker: 41 });
+	expect(machineRevisions({ machines: [...machines, { ...worker, build: "old" }], rev: 43 }, build, now)).toEqual({ api: 40, worker: null });
+});
+it("does not count unrelated production or lookalike apps as workers", () => {
+	for (const app of ["nr-ii-prod-api-r1", "nr-ii-prod-postgres-r1", "nr-ii-prod-workerfake", "nr-ii-staging-worker-r1"])
+		expect(machineRevisions({ machines: [machine("nr-ii-prod-api-r1"), machine(app)], rev: 43 }, build, now)).toEqual({ api: 42, worker: null });
+});
